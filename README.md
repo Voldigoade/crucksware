@@ -2,17 +2,35 @@
 
 Semantic firmware diff and triage in Rust.
 
-**Experimental and under active development.** The initial milestone targets
-comparison of two extracted root filesystem directories. The comparison command
-is not available yet, and there are no releases.
+**Experimental and under active development.** The Linux comparison core for
+two extracted root filesystem directories is implemented behind an experimental
+Rust API. The command-line interface, text report, and JSON output are not
+implemented yet. There are no releases.
 
-Crucksware is intended to answer: what actually changed between firmware
-versions A and B? It is a focused, local tool for firmware analysts, embedded
-engineers, reverse engineers, and defensive security researchers.
+The core compares filesystem paths and metadata, and reads equal-sized regular
+files when their contents must be distinguished. Input trees must remain stable
+during a comparison. Path-based checks do not provide an atomic snapshot or
+containment against concurrent replacement. Reads may update filesystem-managed
+access times.
 
-The first milestone is Linux-first and read-only. It does not extract firmware
-images or interpret binary formats. SquashFS input and semantic file
-classification are outside the initial milestone.
+Crucksware is a focused, local tool for firmware analysts, embedded engineers,
+reverse engineers, and defensive security researchers. It does not extract
+firmware images, interpret binary formats, or execute input files. Direct
+SquashFS input and semantic file classification are outside the initial
+milestone.
+
+## Development
+
+Install stable Rust with rustfmt and Clippy. The comparison core has no
+third-party runtime dependencies. Tests use `tempfile`. The lockfile is
+committed, and CI uses stable Rust on Linux.
+
+```sh
+cargo fmt --check
+cargo check --locked --all-targets
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+```
 
 ## License
 
