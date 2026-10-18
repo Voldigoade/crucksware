@@ -8,3 +8,5 @@ Crucksware follows Semantic Versioning. No releases have been published.
 - Add the experimental Linux comparison core with lossless paths, typed metadata,
   bounded inventory and reads, mutation checks, and deterministic classification.
 - Add deterministic text and schema-versioned JSON reports.
+- Add the comparison CLI with deterministic output, explicit resource limits, and
+  documented process exit statuses.
