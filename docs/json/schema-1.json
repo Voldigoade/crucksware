@@ -1,0 +1,426 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Crucksware comparison report schema version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool_version",
+    "path_encoding",
+    "summary",
+    "changes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "type": "string"
+    },
+    "path_encoding": {
+      "const": "unix-percent-v1"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "added",
+        "removed",
+        "modified",
+        "type_changed",
+        "metadata_changed",
+        "unchanged"
+      ],
+      "properties": {
+        "added": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modified": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type_changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "metadata_changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchanged": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    }
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "category",
+        "changed_fields",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!\\.{1,2}(?:/|$))(?:[A-Za-z0-9._-]|%[0-9A-F]{2})+(?:/(?!\\.{1,2}(?:/|$))(?:[A-Za-z0-9._-]|%[0-9A-F]{2})+)*$(?![\\s\\S])",
+          "not": {
+            "pattern": "%(?:00|2D|2E|2F|3[0-9]|4[1-9A-F]|5[0-9A]|5F|6[1-9A-F]|7[0-9A])"
+          }
+        },
+        "category": {
+          "enum": [
+            "ADDED",
+            "REMOVED",
+            "MODIFIED",
+            "TYPE_CHANGED",
+            "METADATA_CHANGED"
+          ]
+        },
+        "changed_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "type",
+              "content",
+              "symlink_target",
+              "mode",
+              "device_id"
+            ]
+          }
+        },
+        "before": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/entry"
+            }
+          ]
+        },
+        "after": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/entry"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "ADDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "changed_fields": {
+                "const": []
+              },
+              "before": {
+                "type": "null"
+              },
+              "after": {
+                "$ref": "#/$defs/entry"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "REMOVED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "changed_fields": {
+                "const": []
+              },
+              "before": {
+                "$ref": "#/$defs/entry"
+              },
+              "after": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "TYPE_CHANGED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "changed_fields": {
+                "const": [
+                  "type"
+                ]
+              },
+              "before": {
+                "$ref": "#/$defs/entry"
+              },
+              "after": {
+                "$ref": "#/$defs/entry"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "MODIFIED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "changed_fields": {
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "content",
+                    "symlink_target",
+                    "mode"
+                  ]
+                }
+              },
+              "before": {
+                "$ref": "#/$defs/entry"
+              },
+              "after": {
+                "$ref": "#/$defs/entry"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "METADATA_CHANGED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "changed_fields": {
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "mode",
+                    "device_id"
+                  ]
+                }
+              },
+              "before": {
+                "$ref": "#/$defs/entry"
+              },
+              "after": {
+                "$ref": "#/$defs/entry"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "size_bytes",
+        "mode",
+        "symlink_target",
+        "device_id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "fifo",
+            "socket",
+            "char_device",
+            "block_device"
+          ]
+        },
+        "size_bytes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-7]{4}$"
+        },
+        "symlink_target": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(?:[A-Za-z0-9/._-]|%[0-9A-F]{2})*$(?![\\s\\S])",
+          "not": {
+            "pattern": "%(?:00|2D|2E|2F|3[0-9]|4[1-9A-F]|5[0-9A]|5F|6[1-9A-F]|7[0-9A])"
+          }
+        },
+        "device_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "file"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "size_bytes": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "symlink_target": {
+                "type": "null"
+              },
+              "device_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "directory",
+                  "fifo",
+                  "socket"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "size_bytes": {
+                "type": "null"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "symlink_target": {
+                "type": "null"
+              },
+              "device_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "symlink"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "size_bytes": {
+                "type": "null"
+              },
+              "mode": {
+                "type": "null"
+              },
+              "symlink_target": {
+                "type": "string"
+              },
+              "device_id": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "char_device",
+                  "block_device"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "size_bytes": {
+                "type": "null"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "symlink_target": {
+                "type": "null"
+              },
+              "device_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
