@@ -25,3 +25,5 @@ pub fn compare(
 ) -> Result<model::Diff, error::DiffError> {
     Err(error::DiffError::UnsupportedPlatform)
 }
+
+pub mod report;
