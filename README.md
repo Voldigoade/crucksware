@@ -4,8 +4,7 @@ Semantic firmware diff and triage in Rust.
 
 **Experimental and under active development.** The Linux comparison core for two
 extracted root filesystem directories and deterministic text and JSON report writers
-are implemented. The command-line interface is still in development. There are no
-releases.
+are implemented, with a CLI for comparing two trees. There are no releases.
 
 The comparison reads equal-sized regular files when their contents must be distinguished.
 Input trees must remain stable during a comparison. Path-based checks do not provide an
@@ -23,10 +22,19 @@ The [v0.1 design](docs/design/v0.1.md) defines the comparison and report contrac
 including the [JSON schema](docs/json/schema-1.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
 
+```sh
+crucksware compare old-rootfs/ new-rootfs/
+crucksware compare --format json old-rootfs/ new-rootfs/
+```
+
+The command exits with status 0 when the trees have no differences, 1 when they do,
+and 2 when comparison or output fails. See `crucksware compare --help` for limits.
+
 ## Development
 
-Install stable Rust with rustfmt and Clippy. JSON output uses Serde and serde_json. Tests
-use `tempfile`. The lockfile is committed, and CI uses stable Rust on Linux.
+Install stable Rust with rustfmt and Clippy. The CLI uses clap; JSON output uses Serde
+and serde_json. Tests use `tempfile`. The lockfile is committed, and CI uses stable Rust
+on Linux.
 
 ```sh
 cargo fmt --check
