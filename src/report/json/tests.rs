@@ -428,13 +428,11 @@ fn schema_one_freezes_the_approved_fields_types_and_values() {
         ])
     );
     assert_eq!(
-        entry["properties"]["size_bytes"]["type"],
-        json!(["string", "null"])
-    );
-    assert_eq!(entry["properties"]["size_bytes"]["maxLength"], 20);
-    assert_eq!(
-        entry["properties"]["size_bytes"]["pattern"],
-        "^(0|[1-9][0-9]*)$"
+        entry["properties"]["size_bytes"]["oneOf"],
+        json!([
+            {"type": "null"},
+            {"$ref": "#/$defs/u64_decimal"}
+        ])
     );
     assert_eq!(
         entry["properties"]["mode"]["type"],
@@ -453,8 +451,18 @@ fn schema_one_freezes_the_approved_fields_types_and_values() {
         r"%(?:00|2D|2E|2F|3[0-9]|4[1-9A-F]|5[0-9A]|5F|6[1-9A-F]|7[0-9A])"
     );
     assert_eq!(
-        entry["properties"]["device_id"]["type"],
-        json!(["string", "null"])
+        entry["properties"]["device_id"]["oneOf"],
+        json!([
+            {"type": "null"},
+            {"$ref": "#/$defs/u64_decimal"}
+        ])
+    );
+    let u64_decimal = &schema["$defs"]["u64_decimal"];
+    assert_eq!(u64_decimal["type"], "string");
+    assert_eq!(u64_decimal["maxLength"], 20);
+    assert_eq!(
+        u64_decimal["pattern"],
+        r"^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$"
     );
     let entry_rules = entry["allOf"].as_array().unwrap();
     assert_eq!(entry_rules.len(), 4);
