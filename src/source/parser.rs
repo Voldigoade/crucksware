@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     ops::ControlFlow,
@@ -526,16 +527,8 @@ fn compare_facts(old: BTreeMap<Fact, usize>, new: BTreeMap<Fact, usize>) -> Vec<
     for key in keys {
         let old_signatures = old_groups.remove(&key).unwrap_or_default();
         let new_signatures = new_groups.remove(&key).unwrap_or_default();
-        let mut old_unmatched = old_signatures.clone();
-        let mut new_unmatched = new_signatures.clone();
-        old_unmatched.retain(|signature| {
-            if let Some(index) = new_unmatched.iter().position(|other| other == signature) {
-                new_unmatched.remove(index);
-                false
-            } else {
-                true
-            }
-        });
+        let (old_unmatched, new_unmatched) =
+            subtract_sorted_multisets(old_signatures, new_signatures);
         let paired = old_unmatched.len().min(new_unmatched.len());
         for index in 0..paired {
             changes.push(StructuralChange {
@@ -582,6 +575,45 @@ fn compare_facts(old: BTreeMap<Fact, usize>, new: BTreeMap<Fact, usize>) -> Vec<
             ))
     });
     changes
+}
+
+fn subtract_sorted_multisets<T: Ord>(old: Vec<T>, new: Vec<T>) -> (Vec<T>, Vec<T>) {
+    let mut old = old.into_iter().peekable();
+    let mut new = new.into_iter().peekable();
+    let mut old_only = Vec::new();
+    let mut new_only = Vec::new();
+
+    loop {
+        match (old.peek(), new.peek()) {
+            (Some(old_item), Some(new_item)) => match old_item.cmp(new_item) {
+                Ordering::Less => {
+                    if let Some(item) = old.next() {
+                        old_only.push(item);
+                    }
+                }
+                Ordering::Greater => {
+                    if let Some(item) = new.next() {
+                        new_only.push(item);
+                    }
+                }
+                Ordering::Equal => {
+                    old.next();
+                    new.next();
+                }
+            },
+            (Some(_), None) => {
+                old_only.extend(old);
+                break;
+            }
+            (None, Some(_)) => {
+                new_only.extend(new);
+                break;
+            }
+            (None, None) => break,
+        }
+    }
+
+    (old_only, new_only)
 }
 
 fn group_facts(
@@ -669,6 +701,7 @@ fn source_error(path: &std::path::Path, message: String) -> DiffError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{cell::Cell, cmp::Ordering, rc::Rc};
 
     #[test]
     fn file_extensions_only_select_a_parser_hint() {
@@ -725,6 +758,116 @@ mod tests {
                 && change.name == "<Item as Second>::run"
                 && change.after_signature.is_some()
         }));
+    }
+
+    #[test]
+    fn duplicate_signature_matching_uses_linear_order_comparisons() {
+        const RECORDS: usize = 25_000;
+        let comparisons = Rc::new(ComparisonCounts::default());
+        let signatures = || {
+            (0..RECORDS)
+                .map(|_| CountedOrder {
+                    value: 0,
+                    comparisons: Rc::clone(&comparisons),
+                })
+                .collect()
+        };
+
+        let (old_only, new_only) = subtract_sorted_multisets(signatures(), signatures());
+
+        assert!(old_only.is_empty());
+        assert!(new_only.is_empty());
+        assert_eq!(comparisons.order.get(), RECORDS);
+        assert_eq!(comparisons.equality.get(), 0);
+    }
+
+    #[test]
+    fn disjoint_signature_matching_does_not_rescan_the_new_group() {
+        const RECORDS: usize = 10_000;
+        let comparisons = Rc::new(ComparisonCounts::default());
+        let signatures = |range: std::ops::Range<usize>| {
+            range
+                .map(|value| CountedOrder {
+                    value,
+                    comparisons: Rc::clone(&comparisons),
+                })
+                .collect()
+        };
+
+        let (old_only, new_only) =
+            subtract_sorted_multisets(signatures(0..RECORDS), signatures(RECORDS..RECORDS * 2));
+
+        assert_eq!(old_only.len(), RECORDS);
+        assert_eq!(new_only.len(), RECORDS);
+        assert!(
+            old_only
+                .iter()
+                .enumerate()
+                .all(|(value, item)| item.value == value)
+        );
+        assert!(
+            new_only
+                .iter()
+                .enumerate()
+                .all(|(value, item)| item.value == RECORDS + value)
+        );
+        assert_eq!(comparisons.order.get(), RECORDS);
+        assert_eq!(comparisons.equality.get(), 0);
+    }
+
+    #[test]
+    fn duplicate_facts_keep_their_occurrence_counts_when_compared() {
+        let fact = |signature: &str| Fact {
+            kind: StructuralKind::Function,
+            name: "run".to_owned(),
+            signature: Some(signature.to_owned()),
+        };
+        let old = BTreeMap::from([(fact("run(a)"), 2), (fact("run(b)"), 1)]);
+        let new = BTreeMap::from([(fact("run(a)"), 1), (fact("run(c)"), 2)]);
+
+        let changes = compare_facts(old, new);
+
+        assert_eq!(changes.len(), 2);
+        for (change, before) in changes.iter().zip(["run(a)", "run(b)"]) {
+            assert_eq!(change.action, StructuralAction::SignatureChanged);
+            assert_eq!(change.before_signature.as_deref(), Some(before));
+            assert_eq!(change.after_signature.as_deref(), Some("run(c)"));
+        }
+    }
+
+    #[derive(Default)]
+    struct ComparisonCounts {
+        equality: Cell<usize>,
+        order: Cell<usize>,
+    }
+
+    struct CountedOrder {
+        value: usize,
+        comparisons: Rc<ComparisonCounts>,
+    }
+
+    impl PartialEq for CountedOrder {
+        fn eq(&self, other: &Self) -> bool {
+            self.comparisons
+                .equality
+                .set(self.comparisons.equality.get() + 1);
+            self.value == other.value
+        }
+    }
+
+    impl Eq for CountedOrder {}
+
+    impl PartialOrd for CountedOrder {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl Ord for CountedOrder {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.comparisons.order.set(self.comparisons.order.get() + 1);
+            self.value.cmp(&other.value)
+        }
     }
 
     #[test]
