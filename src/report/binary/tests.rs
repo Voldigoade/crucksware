@@ -17,8 +17,8 @@ fn comparison() -> FileComparison {
         semantic_status: SemanticComparisonStatus::Compared,
         semantic_changes: vec![SemanticChange {
             field: "entry_point".to_owned(),
-            before: json!(4096),
-            after: json!(8192),
+            before: json!("4096"),
+            after: json!("8192"),
         }],
     }
 }
@@ -31,7 +31,7 @@ fn text_report_distinguishes_byte_and_semantic_changes() {
 
     assert_eq!(
         String::from_utf8(output).unwrap(),
-        "Binary comparison\nOld: ELF (10 bytes)\nNew: ELF (11 bytes)\nByte-level changed: yes\nSemantic comparison: compared\nSemantic fields changed: 1\nentry_point\t4096\t8192\n"
+        "Binary comparison\nOld: ELF (10 bytes)\nNew: ELF (11 bytes)\nByte-level changed: yes\nSemantic comparison: compared\nSemantic fields changed: 1\nentry_point\t\"4096\"\t\"8192\"\n"
     );
 }
 
@@ -43,7 +43,7 @@ fn json_report_has_a_stable_schema_two_golden_and_trailing_newline() {
 
     assert_eq!(
         String::from_utf8(output).unwrap(),
-        "{\n  \"analysis_type\": \"file_comparison\",\n  \"byte_level_changed\": true,\n  \"new_kind\": \"ELF\",\n  \"new_size_bytes\": \"11\",\n  \"old_kind\": \"ELF\",\n  \"old_size_bytes\": \"10\",\n  \"schema_version\": 2,\n  \"semantic_changes\": [\n    {\n      \"after\": 8192,\n      \"before\": 4096,\n      \"field\": \"entry_point\"\n    }\n  ],\n  \"semantic_status\": \"compared\"\n}\n"
+        "{\n  \"analysis_type\": \"file_comparison\",\n  \"byte_level_changed\": true,\n  \"new_kind\": \"ELF\",\n  \"new_size_bytes\": \"11\",\n  \"old_kind\": \"ELF\",\n  \"old_size_bytes\": \"10\",\n  \"schema_version\": 2,\n  \"semantic_changes\": [\n    {\n      \"after\": \"8192\",\n      \"before\": \"4096\",\n      \"field\": \"entry_point\"\n    }\n  ],\n  \"semantic_status\": \"compared\"\n}\n"
     );
 }
 
@@ -65,6 +65,55 @@ fn schema_two_freezes_the_file_comparison_fields_and_statuses() {
     assert_eq!(required.len(), 9);
     assert!(required.iter().any(|field| field == "byte_level_changed"));
     assert!(required.iter().any(|field| field == "semantic_changes"));
+
+    let decimal_string = &schema["$defs"]["uint64DecimalString"];
+    assert_eq!(decimal_string["type"], "string");
+    assert_eq!(decimal_string["pattern"], "^(0|[1-9][0-9]*)$");
+    assert_eq!(
+        decimal_string["description"],
+        "Unsigned 64-bit facts use decimal strings to preserve exact values in consumers with limited integer precision."
+    );
+    for field in ["entry_point", "image_base", "gnu_relro_segments"] {
+        let rule = schema["$defs"]["semanticChange"]["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|rule| rule["if"]["properties"]["field"]["const"] == field)
+            .unwrap();
+        assert_eq!(
+            rule["then"]["properties"]["before"]["$ref"],
+            "#/$defs/uint64DecimalString"
+        );
+        assert_eq!(
+            rule["then"]["properties"]["after"]["$ref"],
+            "#/$defs/uint64DecimalString"
+        );
+    }
+    for (field, wide_fields) in [
+        ("sections", &["address", "size"][..]),
+        (
+            "segments",
+            &["offset", "virtual_address", "file_size", "memory_size"][..],
+        ),
+        ("symbols", &["value", "size"][..]),
+    ] {
+        let rule = schema["$defs"]["semanticChange"]["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|rule| rule["if"]["properties"]["field"]["const"] == field)
+            .unwrap();
+        for wide_field in wide_fields {
+            assert_eq!(
+                rule["then"]["properties"]["before"]["items"]["properties"][wide_field]["$ref"],
+                "#/$defs/uint64DecimalString"
+            );
+            assert_eq!(
+                rule["then"]["properties"]["after"]["items"]["properties"][wide_field]["$ref"],
+                "#/$defs/uint64DecimalString"
+            );
+        }
+    }
 }
 
 #[test]

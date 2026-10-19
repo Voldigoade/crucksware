@@ -355,8 +355,52 @@ fn compare_reports_elf_semantic_changes_separately_from_bytes() {
     assert_eq!(report["byte_level_changed"], true);
     assert_eq!(report["semantic_status"], "compared");
     assert_eq!(report["semantic_changes"][0]["field"], "entry_point");
-    assert_eq!(report["semantic_changes"][0]["before"], 0x401000_u64);
-    assert_eq!(report["semantic_changes"][0]["after"], 0x402000_u64);
+    assert_eq!(report["semantic_changes"][0]["before"], "4198400");
+    assert_eq!(report["semantic_changes"][0]["after"], "4202496");
+}
+
+#[test]
+fn compare_serializes_wide_binary_facts_as_exact_decimal_strings() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old_elf = temporary.path().join("old-elf");
+    let new_elf = temporary.path().join("new-elf");
+    let old_entry = 9_007_199_254_740_993_u64;
+    fs::write(&old_elf, common::minimal_elf64(old_entry)).unwrap();
+    fs::write(&new_elf, common::minimal_elf64(old_entry + 1)).unwrap();
+
+    let elf_output = run_compare(&old_elf, &new_elf, &["--format=json"]);
+    let elf_report: serde_json::Value = serde_json::from_slice(&elf_output.stdout).unwrap();
+    assert_eq!(elf_output.status.code(), Some(1));
+    assert_eq!(
+        elf_report["semantic_changes"][0]["before"],
+        old_entry.to_string()
+    );
+    assert_eq!(
+        elf_report["semantic_changes"][0]["after"],
+        (old_entry + 1).to_string()
+    );
+
+    let old_pe = temporary.path().join("old-pe");
+    let new_pe = temporary.path().join("new-pe");
+    let old_base = 9_007_199_254_740_993_u64;
+    let mut old_image = common::minimal_pe64(0x1000);
+    let mut new_image = common::minimal_pe64(0x1000);
+    old_image[0xb0..0xb8].copy_from_slice(&old_base.to_le_bytes());
+    new_image[0xb0..0xb8].copy_from_slice(&(old_base + 1).to_le_bytes());
+    fs::write(&old_pe, old_image).unwrap();
+    fs::write(&new_pe, new_image).unwrap();
+
+    let pe_output = run_compare(&old_pe, &new_pe, &["--format=json"]);
+    let pe_report: serde_json::Value = serde_json::from_slice(&pe_output.stdout).unwrap();
+    assert_eq!(pe_output.status.code(), Some(1));
+    let image_base = pe_report["semantic_changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["field"] == "image_base")
+        .unwrap();
+    assert_eq!(image_base["before"], old_base.to_string());
+    assert_eq!(image_base["after"], (old_base + 1).to_string());
 }
 
 #[test]

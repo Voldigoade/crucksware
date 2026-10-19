@@ -110,14 +110,7 @@
           "semantic_changes": {
             "type": "array",
             "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["field", "before", "after"],
-              "properties": {
-                "field": { "type": "string" },
-                "before": {},
-                "after": {}
-              }
+              "$ref": "schema-2.json#/$defs/semanticChange"
             }
           }
         }
