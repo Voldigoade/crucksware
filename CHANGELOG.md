@@ -2,6 +2,16 @@
 
 Crucksware follows Semantic Versioning.
 
+## Unreleased
+
+- Add bounded inspection and semantic comparison for ELF and PE files while keeping
+  exact byte changes separate from normalized format facts.
+- Add source-aware directory comparison for Rust, C, C++, and Python, with bounded text
+  diffs for changed text files and static analysis for changed ELF and PE files.
+- Add single-file inspection and combined semantic reports. Directory comparison keeps
+  JSON schema v1; file comparison, source-aware comparison, and inspection use schemas
+  v2, v4, and v5 respectively.
+
 ## 0.1.0
 
 - Compare two extracted Linux root filesystem trees using bounded inventory, exact
