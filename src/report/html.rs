@@ -77,9 +77,13 @@ pub fn write_html(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
         write_groups(diff, output)?;
     }
 
-    output.write_all(b"</section>\n</main>\n<script>")?;
-    output.write_all(FILTER_SCRIPT.as_bytes())?;
-    output.write_all(b"</script>\n</body>\n</html>\n")
+    output.write_all(b"</section>\n</main>\n")?;
+    if !diff.changes.is_empty() {
+        output.write_all(b"<script>")?;
+        output.write_all(FILTER_SCRIPT.as_bytes())?;
+        output.write_all(b"</script>\n")?;
+    }
+    output.write_all(b"</body>\n</html>\n")
 }
 
 fn write_summary(diff: &Diff, total_changes: u64, output: &mut impl Write) -> io::Result<()> {

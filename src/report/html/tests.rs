@@ -121,6 +121,7 @@ fn empty_diff_renders_a_summary_without_change_groups() {
     assert!(html.contains(">Total changes</th><td>0</td>"));
     assert!(html.contains("No changes."));
     assert!(!html.contains("<details class=\"change-group\""));
+    assert!(!html.contains("<script>"));
 }
 
 #[test]
