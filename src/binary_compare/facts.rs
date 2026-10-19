@@ -34,6 +34,7 @@ pub(super) fn compare_inspections(
         new_kind: new.kind,
         old_size_bytes: old.size_bytes,
         new_size_bytes: new.size_bytes,
+        bytes_read: 0,
         bytes_changed,
         semantic_status,
         semantic_changes,

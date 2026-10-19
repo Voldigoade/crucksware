@@ -119,12 +119,13 @@ pub(crate) fn analyze_changes(
     new: &crate::model::Snapshot,
     budget: &mut crate::limits::Budget,
     max_source_file_bytes: u64,
+    progress: &mut Option<impl FnMut(crate::progress::ProgressEvent)>,
 ) -> Result<Vec<SourceFileChange>, crate::error::DiffError> {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::Path};
 
     use crate::{
         error::{DiffError, Resource, Side},
-        model::{Category, ChangedField, Entry},
+        progress::{ProgressEvent, ProgressPhase, emit},
     };
 
     if max_source_file_bytes == 0 || max_source_file_bytes > MAX_SOURCE_FILE_BYTES {
@@ -134,21 +135,26 @@ pub(crate) fn analyze_changes(
         });
     }
 
+    let report_progress = progress.is_some();
+    let phase = ProgressPhase::SourceAnalysis;
+    if report_progress {
+        emit(progress, ProgressEvent::PhaseStarted { phase, total: None });
+    }
+    let total = if report_progress {
+        changed_regular_file_count(diff, old, new)?
+    } else {
+        0
+    };
+    if report_progress {
+        emit(progress, ProgressEvent::PhaseTotalKnown { phase, total });
+    }
+    let mut completed = 0_u64;
     let mut analyzer = parser::Analyzer::new();
     let mut changes = Vec::new();
     for change in &diff.changes {
-        if change.category == Category::MetadataChanged
-            || (change.category == Category::Modified
-                && !change.changed_fields.contains(&ChangedField::Content))
-        {
-            continue;
-        }
-
         let old_entry = old.entries.get(&change.path);
         let new_entry = new.entries.get(&change.path);
-        if old_entry.is_some_and(|entry| !matches!(&entry.entry, Entry::File { .. }))
-            || new_entry.is_some_and(|entry| !matches!(&entry.entry, Entry::File { .. }))
-        {
+        if !is_changed_regular_file(change, old_entry, new_entry) {
             continue;
         }
         let old_text = read_source_side(
@@ -212,8 +218,71 @@ pub(crate) fn analyze_changes(
         if let Some(file_change) = file_change {
             changes.push(file_change);
         }
+        if report_progress {
+            completed = completed.checked_add(1).ok_or(DiffError::LimitExceeded {
+                resource: Resource::Entries,
+                limit: total,
+            })?;
+            emit(
+                progress,
+                ProgressEvent::BytesRead {
+                    total_bytes_read: budget.bytes_read(),
+                },
+            );
+            emit(
+                progress,
+                ProgressEvent::PhaseProgress {
+                    phase,
+                    completed,
+                    total,
+                },
+            );
+        }
+    }
+    if report_progress {
+        emit(progress, ProgressEvent::PhaseCompleted { phase });
     }
     Ok(changes)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn is_changed_regular_file(
+    change: &crate::model::Change,
+    old_entry: Option<&crate::model::ObservedEntry>,
+    new_entry: Option<&crate::model::ObservedEntry>,
+) -> bool {
+    use crate::model::{Category, ChangedField, Entry};
+
+    if change.category == Category::MetadataChanged
+        || (change.category == Category::Modified
+            && !change.changed_fields.contains(&ChangedField::Content))
+    {
+        return false;
+    }
+    !old_entry.is_some_and(|entry| !matches!(&entry.entry, Entry::File { .. }))
+        && !new_entry.is_some_and(|entry| !matches!(&entry.entry, Entry::File { .. }))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn changed_regular_file_count(
+    diff: &Diff,
+    old: &crate::model::Snapshot,
+    new: &crate::model::Snapshot,
+) -> Result<u64, crate::error::DiffError> {
+    use crate::error::{DiffError, Resource};
+
+    diff.changes.iter().try_fold(0_u64, |count, change| {
+        let old_entry = old.entries.get(&change.path);
+        let new_entry = new.entries.get(&change.path);
+        if is_changed_regular_file(change, old_entry, new_entry) {
+            count.checked_add(1).ok_or(DiffError::LimitExceeded {
+                resource: Resource::Entries,
+                limit: u64::MAX,
+            })
+        } else {
+            Ok(count)
+        }
+    })
 }
 
 #[cfg(target_os = "linux")]

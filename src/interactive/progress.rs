@@ -161,7 +161,10 @@ impl ProgressState {
     }
 
     fn message(&self) -> Option<String> {
-        let suffix = match self.phase? {
+        let phase = self.phase?;
+        let suffix = match phase {
+            ProgressPhase::Inspection => "Inspecting input".to_owned(),
+            ProgressPhase::FileComparison => "Comparing files".to_owned(),
             ProgressPhase::Inventory(side) => {
                 let entries = match side {
                     Side::Old => self.old_entries,
@@ -183,12 +186,35 @@ impl ProgressState {
                 format_count(self.completed),
                 format_count(self.total?)
             ),
+            ProgressPhase::SourceAnalysis if self.total.is_none() => {
+                "Counting changed files".to_owned()
+            }
+            ProgressPhase::SourceAnalysis => format!(
+                "Analyzing changed files {} / {}",
+                format_count(self.completed),
+                format_count(self.total?)
+            ),
+            ProgressPhase::BinaryAnalysis if self.total.is_none() => {
+                "Counting remaining files".to_owned()
+            }
+            ProgressPhase::BinaryAnalysis => format!(
+                "Analyzing remaining files {} / {}",
+                format_count(self.completed),
+                format_count(self.total?)
+            ),
         };
-        Some(format!(
-            "{suffix} | {} read | {} found",
-            format_bytes(self.bytes_read),
-            format_changes(self.changes)
-        ))
+        if matches!(
+            phase,
+            ProgressPhase::Inspection | ProgressPhase::FileComparison
+        ) {
+            Some(format!("{suffix} | {} read", format_bytes(self.bytes_read)))
+        } else {
+            Some(format!(
+                "{suffix} | {} read | {} found",
+                format_bytes(self.bytes_read),
+                format_changes(self.changes)
+            ))
+        }
     }
 }
 
@@ -348,5 +374,47 @@ mod tests {
             total: 12_481,
         });
         assert_eq!(state.bounded_progress(), Some((8_921, 12_481)));
+    }
+
+    #[test]
+    fn individual_input_progress_shows_bytes_without_claiming_changes() {
+        let mut state = ProgressState::default();
+        state.observe(ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::Inspection,
+            total: None,
+        });
+        state.observe(ProgressEvent::BytesRead {
+            total_bytes_read: 8_192,
+        });
+
+        assert_eq!(
+            state.message().as_deref(),
+            Some("Inspecting input | 8.0 KiB read")
+        );
+        assert_eq!(state.bounded_progress(), None);
+    }
+
+    #[test]
+    fn unknown_semantic_analysis_phases_remain_labeled_while_counting() {
+        let mut state = ProgressState::default();
+        state.observe(ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::SourceAnalysis,
+            total: None,
+        });
+        assert_eq!(
+            state.message().as_deref(),
+            Some("Counting changed files | 0 B read | 0 changes found")
+        );
+        assert_eq!(state.bounded_progress(), None);
+
+        state.observe(ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::BinaryAnalysis,
+            total: None,
+        });
+        assert_eq!(
+            state.message().as_deref(),
+            Some("Counting remaining files | 0 B read | 0 changes found")
+        );
+        assert_eq!(state.bounded_progress(), None);
     }
 }

@@ -12,6 +12,7 @@ fn comparison() -> FileComparison {
         new_kind: InputKind::Elf,
         old_size_bytes: 10,
         new_size_bytes: 11,
+        bytes_read: 21,
         bytes_changed: true,
         semantic_status: SemanticComparisonStatus::Compared,
         semantic_changes: vec![SemanticChange {

@@ -48,7 +48,9 @@ pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session
         return;
     };
     if !matches!(last, LastAnalysis::DirectoryComparison { .. }) {
-        eprintln!("crucksware: reports are currently available for directory comparisons");
+        eprintln!(
+            "crucksware: report export currently supports filesystem-only directory comparisons"
+        );
         return;
     }
     let output_path = if output_argument.is_empty() {
