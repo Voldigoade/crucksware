@@ -35,12 +35,12 @@ campaign took 12.70 seconds on the measurement machine.
 
 ## Coverage-guided fuzz campaigns
 
-Two `cargo-fuzz` targets call the public file-inspection and binary-comparison APIs.
-Both use `libfuzzer-sys` with AddressSanitizer and sanitizer coverage. Inputs are written
-to temporary files, capped at 1 MiB, and processed with a 4,096-entry limit. Seed corpora
-contain minimal ELF and PE files, truncated format candidates, and unknown binary data.
-Generated corpus entries were kept under `/tmp`; only the initial synthetic seeds are
-tracked.
+The `inspect_file` and `compare_files` targets call the public file-inspection and
+binary-comparison APIs. Both use `libfuzzer-sys` with AddressSanitizer and sanitizer
+coverage. Inputs are written to temporary files, capped at 1 MiB, and processed with a
+4,096-entry limit. Seed corpora contain minimal ELF and PE files, truncated format
+candidates, and unknown binary data. Generated corpus entries were kept under `/tmp`; only
+the initial synthetic seeds are tracked.
 
 Campaigns ran on Ubuntu 26.04.1 LTS, x86_64, Linux 7.0.0-38-generic, with
 `rustc 1.101.0-nightly (b6eeb93c9 2026-10-18)`, `cargo-fuzz 0.13.2`, and
@@ -56,3 +56,20 @@ Neither campaign reported a crash, timeout, sanitizer finding, or crash artifact
 earlier deterministic release mutation campaign and the persistent malformed-input tests
 remain in place. These bounded runs provide evidence for the tested build and seeds; they
 do not prove parser safety or replace longer campaigns and testing on other architectures.
+
+## Tree-sitter source-analysis campaign
+
+The `source_analysis` target maps bounded arbitrary bytes to valid UTF-8 Rust source and
+compares it against a synthetic baseline using the public source-aware directory API. It
+does not execute the generated source. A 60-second AddressSanitizer campaign used two
+tracked seed inputs, a 2-second per-input timeout, and a 256 KiB maximum fuzz input. It
+completed 4,529 executions at an average 74 executions per second with a peak RSS of
+383 MiB. No crash, timeout, or AddressSanitizer finding occurred.
+
+The run used Ubuntu 26.04.1 LTS, x86_64, Linux 7.0.0-38-generic, `rustc
+1.101.0-nightly (b6eeb93c9 2026-10-18)`, `cargo-fuzz 0.13.2`, and Clang 21.1.8. An
+initial run completed its input loop but LeakSanitizer failed during shutdown because the
+container does not permit its required ptrace access. The successful retry set
+`ASAN_OPTIONS=detect_leaks=0`; AddressSanitizer remained enabled, but this campaign does
+not provide leak-detection evidence. This bounded run does not prove parser safety or
+replace longer campaigns and testing on other architectures.

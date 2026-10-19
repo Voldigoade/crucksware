@@ -11,6 +11,7 @@ Crucksware follows Semantic Versioning.
 - Add single-file inspection and combined semantic reports. Directory comparison keeps
   JSON schema v1; file comparison, source-aware comparison, and inspection use schemas
   v2, v4, and v5 respectively.
+- Bound source parser and query work with deterministic cancellation limits.
 
 ## 0.1.0
 

@@ -27,6 +27,8 @@ pub enum Resource {
     SourceFactBytes,
     SourceLines,
     SourceNodes,
+    SourceParseWork,
+    SourceQueryWork,
     SourceRecords,
 }
 
@@ -41,6 +43,8 @@ impl fmt::Display for Resource {
             Self::SourceFactBytes => "source fact byte",
             Self::SourceLines => "source line",
             Self::SourceNodes => "source syntax node",
+            Self::SourceParseWork => "source parse work",
+            Self::SourceQueryWork => "source query work",
             Self::SourceRecords => "source record",
         })
     }

@@ -1,19 +1,28 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
+    ops::ControlFlow,
     os::unix::ffi::OsStrExt,
     path::Path,
 };
 
-use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{
+    Language, Node, ParseOptions, ParseState, Parser, Query, QueryCursor, QueryCursorOptions,
+    QueryCursorState, StreamingIterator,
+};
 
 use super::{
     MAX_SOURCE_FACT_BYTES, MAX_SOURCE_RECORDS, SourceLanguage, StructuralAction, StructuralChange,
     StructuralKind, StructuralStatus,
 };
-use crate::{error::DiffError, path::RelPath};
+use crate::{
+    error::{DiffError, Resource},
+    path::RelPath,
+};
 
 const MAX_SOURCE_NODES: usize = 500_000;
+const MAX_SOURCE_PARSE_CALLBACKS: u64 = 100_000;
+const MAX_SOURCE_QUERY_CALLBACKS: u64 = 10_000;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Fact {
@@ -36,7 +45,24 @@ pub(super) fn language_for_path(path: &Path) -> Option<SourceLanguage> {
 pub(super) struct Analyzer {
     parsers: BTreeMap<SourceLanguage, Parser>,
     queries: BTreeMap<SourceLanguage, Query>,
+    budget: AnalysisBudget,
+}
+
+struct AnalysisBudget {
     fact_bytes: u64,
+    work_limits: WorkLimits,
+    work: WorkCounters,
+}
+
+#[derive(Clone, Copy)]
+struct WorkLimits {
+    parse_callbacks: u64,
+    query_callbacks: u64,
+}
+
+struct WorkCounters {
+    parse_callbacks: u64,
+    query_callbacks: u64,
 }
 
 impl Analyzer {
@@ -44,7 +70,17 @@ impl Analyzer {
         Self {
             parsers: BTreeMap::new(),
             queries: BTreeMap::new(),
-            fact_bytes: 0,
+            budget: AnalysisBudget {
+                fact_bytes: 0,
+                work_limits: WorkLimits {
+                    parse_callbacks: MAX_SOURCE_PARSE_CALLBACKS,
+                    query_callbacks: MAX_SOURCE_QUERY_CALLBACKS,
+                },
+                work: WorkCounters {
+                    parse_callbacks: 0,
+                    query_callbacks: 0,
+                },
+            },
         }
     }
 
@@ -57,18 +93,15 @@ impl Analyzer {
     ) -> Result<(StructuralStatus, Vec<StructuralChange>), DiffError> {
         let display_path = Path::new(OsStr::from_bytes(path.as_bytes()));
         self.prepare(language, display_path)?;
-        let parser = self
-            .parsers
+        let (parsers, queries, budget) = (&mut self.parsers, &self.queries, &mut self.budget);
+        let parser = parsers
             .get_mut(&language)
             .ok_or_else(|| source_error(display_path, "parser state is unavailable".to_owned()))?;
-        let query = self
-            .queries
+        let query = queries
             .get(&language)
             .ok_or_else(|| source_error(display_path, "parser query is unavailable".to_owned()))?;
-        let (old_has_errors, old_facts) =
-            parse(parser, query, language, old, path, &mut self.fact_bytes)?;
-        let (new_has_errors, new_facts) =
-            parse(parser, query, language, new, path, &mut self.fact_bytes)?;
+        let (old_has_errors, old_facts) = parse(parser, query, language, old, path, budget)?;
+        let (new_has_errors, new_facts) = parse(parser, query, language, new, path, budget)?;
         if old_has_errors || new_has_errors {
             return Ok((StructuralStatus::SyntaxErrors, Vec::new()));
         }
@@ -102,12 +135,36 @@ fn parse(
     language: SourceLanguage,
     source: &str,
     path: &RelPath,
-    fact_bytes: &mut u64,
+    budget: &mut AnalysisBudget,
 ) -> Result<(bool, BTreeMap<Fact, usize>), DiffError> {
     let display_path = Path::new(OsStr::from_bytes(path.as_bytes())).to_path_buf();
-    let tree = parser
-        .parse(source.as_bytes(), None)
-        .ok_or_else(|| source_error(&display_path, "parser did not complete".to_owned()))?;
+    let source_bytes = source.as_bytes();
+    let parse_callback_limit = budget.work_limits.parse_callbacks;
+    let mut parse_limit_exceeded = false;
+    let mut progress = |_: &ParseState| {
+        if budget.work.parse_callbacks >= parse_callback_limit {
+            parse_limit_exceeded = true;
+            ControlFlow::Break(())
+        } else {
+            budget.work.parse_callbacks += 1;
+            ControlFlow::Continue(())
+        }
+    };
+    let mut input = |offset: usize, _| &source_bytes[offset..];
+    let tree = parser.parse_with_options(
+        &mut input,
+        None,
+        Some(ParseOptions::new().progress_callback(&mut progress)),
+    );
+    drop(progress);
+    if parse_limit_exceeded {
+        return Err(DiffError::LimitExceeded {
+            resource: Resource::SourceParseWork,
+            limit: parse_callback_limit,
+        });
+    }
+    let tree =
+        tree.ok_or_else(|| source_error(&display_path, "parser did not complete".to_owned()))?;
     let root = tree.root_node();
     if root.has_error() {
         return Ok((true, BTreeMap::new()));
@@ -121,10 +178,26 @@ fn parse(
         source,
         &mut facts,
         &mut record_count,
-        fact_bytes,
+        &mut budget.fact_bytes,
     )?;
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, root, source.as_bytes());
+    let query_callback_limit = budget.work_limits.query_callbacks;
+    let mut query_limit_exceeded = false;
+    let mut progress = |_: &QueryCursorState| {
+        if budget.work.query_callbacks >= query_callback_limit {
+            query_limit_exceeded = true;
+            ControlFlow::Break(())
+        } else {
+            budget.work.query_callbacks += 1;
+            ControlFlow::Continue(())
+        }
+    };
+    let mut matches = cursor.matches_with_options(
+        query,
+        root,
+        source.as_bytes(),
+        QueryCursorOptions::new().progress_callback(&mut progress),
+    );
     let mut seen_definitions = BTreeSet::new();
     while let Some(query_match) = matches.next() {
         let mut name = None;
@@ -169,7 +242,7 @@ fn parse(
         insert_fact(
             &mut facts,
             &mut record_count,
-            fact_bytes,
+            &mut budget.fact_bytes,
             Fact {
                 kind,
                 name: qualified_name,
@@ -178,6 +251,14 @@ fn parse(
                     .flatten(),
             },
         )?;
+    }
+    drop(matches);
+    drop(progress);
+    if query_limit_exceeded {
+        return Err(DiffError::LimitExceeded {
+            resource: Resource::SourceQueryWork,
+            limit: query_callback_limit,
+        });
     }
     Ok((false, facts))
 }
@@ -663,6 +744,47 @@ mod tests {
                 limit,
             }
                 if limit == MAX_SOURCE_NODES as u64
+        ));
+    }
+
+    #[test]
+    fn parsing_stops_at_its_work_limit_before_fact_extraction() {
+        let path = RelPath::new(b"large.rs".to_vec()).unwrap();
+        let source = "fn item() {}\n".repeat(1_000);
+        let mut analyzer = Analyzer::new();
+        analyzer.budget.work_limits.parse_callbacks = 0;
+
+        let error = analyzer
+            .compare(SourceLanguage::Rust, "", &source, &path)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DiffError::LimitExceeded {
+                resource: crate::error::Resource::SourceParseWork,
+                limit: 0,
+            }
+        ));
+    }
+
+    #[test]
+    fn querying_stops_at_its_work_limit_without_returning_partial_facts() {
+        let path = RelPath::new(b"large.rs".to_vec()).unwrap();
+        let source = "fn item() {}\n".repeat(1_000);
+        let mut analyzer = Analyzer::new();
+        analyzer.budget.work_limits.query_callbacks = 0;
+
+        let result = analyzer.compare(SourceLanguage::Rust, "", &source, &path);
+
+        let Err(error) = result else {
+            panic!("query work limit should fail the analysis");
+        };
+        assert!(matches!(
+            error,
+            DiffError::LimitExceeded {
+                resource: crate::error::Resource::SourceQueryWork,
+                limit: 0,
+            }
         ));
     }
 }
