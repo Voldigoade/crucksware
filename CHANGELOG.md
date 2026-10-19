@@ -1,8 +1,8 @@
 # Changelog
 
-Crucksware follows Semantic Versioning. No releases have been published.
+Crucksware follows Semantic Versioning.
 
-## 0.1.0 release candidate
+## 0.1.0
 
 - Compare two extracted Linux root filesystem trees using bounded inventory, exact
   regular-file comparison, metadata classification, and mutation checks.
