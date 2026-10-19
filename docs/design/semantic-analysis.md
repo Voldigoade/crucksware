@@ -138,3 +138,15 @@ directory result. The `semantic_tree` module adds changed ELF and PE inspections
 unknown-binary classifications, while `report::semantic_tree` renders the combined
 schema-v4 output. `report::inspection` renders schema-v5 single-input reports, and
 `report::binary` renders file-comparison reports without changing schema v2.
+
+## Change prioritization
+
+Prioritization is deferred. Filesystem changes, source facts, and ELF or PE facts use
+different result models and do not yet expose a shared set of signals across all input
+types. Assigning high, medium, or routine labels now would require format-specific gaps
+and path heuristics, which could mislead users about which changes deserve attention.
+
+A future implementation should use documented deterministic rules, show the observed
+facts that triggered each label, and leave unsupported or unclassified changes unlabeled.
+It should not produce a numeric score or infer maliciousness. Rules should be introduced
+with a deliberate report-schema version so existing output meanings remain stable.
