@@ -83,9 +83,9 @@ branch. These results apply only to this machine, these fixtures, and warm-cache
 
 ## Binary size and observations
 
-The unstripped release executable measured 2,029,528 bytes at the base and 11,966,008
-bytes on the feature branch, an increase of 9,936,480 bytes. The corresponding `size`
-text sections were 1,501,785 and 10,256,689 bytes. The feature dependency tree includes
+The unstripped release executable measured 2,029,528 bytes at the base and 11,977,944
+bytes on the feature branch, an increase of 9,948,416 bytes. The corresponding `size`
+text sections were 1,501,785 and 10,268,425 bytes. The feature dependency tree includes
 the object parser, Tree-sitter, and the selected language grammars. No section-level
 attribution or stripped-binary comparison was performed.
 
