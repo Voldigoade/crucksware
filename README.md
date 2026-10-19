@@ -21,6 +21,8 @@ file classification are outside the initial milestone.
 The [v0.1 design](docs/design/v0.1.md) defines the comparison and report contract,
 including the [JSON schema](docs/json/schema-1.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
+The [future binary analysis design](docs/design/binary-analysis.md) is planning only;
+binary parsing is not implemented.
 
 ```sh
 crucksware compare old-rootfs/ new-rootfs/
