@@ -8,6 +8,7 @@ pub mod limits;
 pub mod model;
 pub mod path;
 pub mod progress;
+pub mod readable;
 
 #[cfg(target_os = "linux")]
 mod scan;

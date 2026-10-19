@@ -118,7 +118,11 @@ fn renders_every_category_and_field_with_encoded_paths_and_targets() {
     );
     let mut actual = Vec::new();
     write_text(&diff, &mut actual).unwrap();
-    assert_eq!(actual, expected.as_bytes());
+    let actual_text = String::from_utf8(actual.clone()).unwrap();
+    assert!(actual_text.starts_with(
+        "Readable summary\nFilesystem: 6 changes across 14 entries (1 added, 1 removed, 2 modified, 1 type changed, 1 metadata changed, 8 unchanged).\nNotable changes:\n"
+    ));
+    assert!(actual_text.ends_with(expected));
 
     let mut repeated = Vec::new();
     write_text(&diff, &mut repeated).unwrap();
@@ -132,7 +136,7 @@ fn empty_diff_has_only_the_summary_line() {
 
     assert_eq!(
         actual,
-        b"Summary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n"
+        b"Readable summary\nNo changes were found.\n\nSummary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n"
     );
 }
 

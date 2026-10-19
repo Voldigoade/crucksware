@@ -29,10 +29,13 @@ fn text_report_distinguishes_byte_and_semantic_changes() {
 
     write_text(&comparison(), &mut output).unwrap();
 
-    assert_eq!(
-        String::from_utf8(output).unwrap(),
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.starts_with(
+        "Readable summary\nBinary analysis: 2 inputs, 1 semantic field change.\nNotable changes:\n- Binary comparison\n  - E0001: binary field \"entry_point\" changed from \"4096\" to \"8192\".\n  - E0002: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n\n"
+    ));
+    assert!(output.ends_with(
         "Binary comparison\nOld: ELF (10 bytes)\nNew: ELF (11 bytes)\nByte-level changed: yes\nSemantic comparison: compared\nSemantic fields changed: 1\nentry_point\t\"4096\"\t\"8192\"\n"
-    );
+    ));
 }
 
 #[test]
@@ -141,20 +144,29 @@ fn markdown_file_report_is_deterministic_and_escapes_semantic_values() {
 
     write_markdown(&comparison, &mut output).unwrap();
 
-    assert_eq!(
-        String::from_utf8(output.clone()).unwrap(),
+    let markdown = String::from_utf8(output.clone()).unwrap();
+    assert!(markdown.starts_with(
         concat!(
-            "# Crucksware report\n\n## Summary\n\n",
-            "| Field | Value |\n|:--|:--|\n",
-            "| Old kind | ELF |\n| New kind | ELF |\n",
-            "| Old size bytes | 10 |\n| New size bytes | 11 |\n",
-            "| Byte-level changed | yes |\n| Semantic status | compared |\n",
-            "| Semantic fields changed | 1 |\n\n",
-            "## Semantic changes\n\n",
-            "| Field | Before | After |\n|:--|:--|:--|\n",
-            "| entry\\|point | &quot;&lt;script&gt;\\|old&quot; | &quot;new\\|value&quot; |\n"
-        )
+            "# Crucksware report\n\n## Readable summary\n\n",
+            "Binary analysis: 2 inputs, 1 semantic field change.\n\n",
+            "### Notable changes\n\n",
+            "- Binary comparison\n",
+            "  - **E0001**: binary field \"entry\\|point\" changed from \"\\<script\\>\\|old\" to \"new\\|value\".\n",
+            "  - **E0002**: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n"
+        )),
+        "{markdown}"
     );
+    assert!(markdown.ends_with(concat!(
+        "## Summary\n\n",
+        "| Field | Value |\n|:--|:--|\n",
+        "| Old kind | ELF |\n| New kind | ELF |\n",
+        "| Old size bytes | 10 |\n| New size bytes | 11 |\n",
+        "| Byte-level changed | yes |\n| Semantic status | compared |\n",
+        "| Semantic fields changed | 1 |\n\n",
+        "## Semantic changes\n\n",
+        "| Field | Before | After |\n|:--|:--|:--|\n",
+        "| entry\\|point | &quot;&lt;script&gt;\\|old&quot; | &quot;new\\|value&quot; |\n"
+    )));
 
     let mut repeated = Vec::new();
     write_markdown(&comparison, &mut repeated).unwrap();
