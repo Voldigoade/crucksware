@@ -230,7 +230,7 @@ fn write_structural_change(change: &StructuralChange, output: &mut impl Write) -
 
 pub fn write_json(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
     let report = JsonSemanticTreeReport {
-        schema_version: 4,
+        schema_version: 7,
         analysis_type: "semantic_tree_comparison",
         filesystem: json::json_report(&diff.filesystem),
         source_changes: diff

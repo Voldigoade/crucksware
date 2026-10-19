@@ -60,7 +60,7 @@ pub fn write_json(comparison: &FileComparison, output: &mut impl Write) -> io::R
         })
         .collect();
     let mut report = Map::new();
-    report.insert("schema_version".to_owned(), json!(2));
+    report.insert("schema_version".to_owned(), json!(6));
     report.insert("analysis_type".to_owned(), json!("file_comparison"));
     report.insert(
         "old_kind".to_owned(),

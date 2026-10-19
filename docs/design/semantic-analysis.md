@@ -14,11 +14,11 @@ checks. New analysis capabilities are layered around that engine.
   duplicate comparison or parsing logic.
 
 These boundaries use focused modules and enums. They do not require a plugin registry.
-The filesystem comparison contract and JSON schema v1 remain unchanged. File comparison
-uses JSON schema v2. Semantic-tree comparison uses schema v4; schema v3 remains the
-documented source-only report shape. Single-file inspection uses JSON schema v5. These
-schema versions identify report shapes and remain independent of the tool's semantic
-version.
+The filesystem comparison contract and JSON schema v1 remain unchanged. Schemas v2 and
+v4 retain their original contracts. Current file-comparison output uses schema v6, and
+current semantic-tree comparison uses schema v7. Schema v3 remains the documented
+source-only report shape, and single-file inspection uses schema v5. These schema
+versions identify report shapes and remain independent of the tool's semantic version.
 
 ## Detection contract
 
@@ -66,8 +66,9 @@ input kind is reported as a format mismatch. Text and unknown-binary pairs recei
 byte comparison only. Byte-level change is independent of semantic fact changes, and
 semantic fact equality does not establish behavioral equivalence.
 
-File-comparison reports use JSON schema v2. Directory comparison remains on schema v1;
-the schemas have distinct `analysis_type` values and are not interchangeable.
+File-comparison reports use JSON schema v6. Schema v2 remains available for consumers of
+the earlier number-compatible contract. Directory comparison remains on schema v1; the
+schemas have distinct `analysis_type` values and are not interchangeable.
 
 Single-file inspection reports use schema v5. They include the detected input kind,
 content classification, size, and available ELF or PE facts. Numeric sizes and addresses
@@ -126,18 +127,20 @@ true when both file versions exist and the exact directory diff found different 
 it is null for a one-sided addition or removal, where there is no byte pair to compare.
 
 Source-aware text output appends source-change, structural, and binary rows to the
-filesystem report. JSON output uses schema v4, whose `filesystem` member retains schema
+filesystem report. JSON output uses schema v7, whose `filesystem` member retains schema
 v1 and whose `source_changes` and `binary_changes` members carry the additional results.
-Schema v3 remains the contract for the earlier source-only report shape. Schema versions
-identify report shapes and are independent of the tool's semantic version.
+Schema v4 remains available for consumers of the earlier semantic-tree report shape, and
+schema v3 remains the contract for the source-only report shape. Schema versions identify
+report shapes and are independent of the tool's semantic version.
 
 All supported report models render as text, JSON, Markdown, and one-file offline HTML.
-Directory JSON remains schema v1, file-comparison JSON remains schema v2, combined
-source-aware directory JSON uses schema v4, and single-file inspection JSON uses schema
-v5. Markdown reports use a concise summary and safe encoded paths. The inspection Markdown
-report includes its structured facts as an indented JSON block. HTML reports include
-embedded CSS and static JavaScript; directory and semantic-tree reports provide local
-path and category filters. They do not load remote resources.
+Directory JSON remains schema v1, file-comparison JSON uses schema v6, combined
+source-aware directory JSON uses schema v7, and single-file inspection JSON uses schema
+v5. Schemas v2 and v4 preserve the previous report contracts. Markdown reports use a
+concise summary and safe encoded paths. The inspection Markdown report includes its
+structured facts as an indented JSON block. HTML reports include embedded CSS and static
+JavaScript; directory and semantic-tree reports provide local path and category filters.
+They do not load remote resources.
 
 The `similar` crate supplies the line-diff algorithm. Tree-sitter and its Rust, C, C++,
 and Python grammars provide one parser interface for the selected languages. The existing
@@ -152,9 +155,10 @@ module validates supported ELF and PE candidates and builds static facts. The
 existing `compare` and `scan` modules handle extracted Linux root filesystem directories.
 The `source` module layers bounded text diffs and selected syntax facts over the existing
 directory result. The `semantic_tree` module adds changed ELF and PE inspections and
-unknown-binary classifications, while `report::semantic_tree` renders the combined
-schema-v4 output. `report::inspection` renders schema-v5 single-input reports, and
-`report::binary` renders file-comparison reports without changing schema v2.
+unknown-binary classifications, while `report::semantic_tree` renders combined schema-v7
+output. `report::inspection` renders schema-v5 single-input reports, and `report::binary`
+renders file-comparison reports using schema v6. Unsigned 64-bit semantic facts are
+decimal strings in schemas v6 and v7 so JSON consumers preserve their exact values.
 
 ## Change prioritization
 

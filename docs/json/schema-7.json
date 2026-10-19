@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Voldigoade/crucksware/main/docs/json/schema-7.json",
+  "title": "Crucksware semantic-tree comparison report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "analysis_type", "filesystem", "source_changes", "binary_changes"],
+  "properties": {
+    "schema_version": { "const": 7 },
+    "analysis_type": { "const": "semantic_tree_comparison" },
+    "filesystem": { "$ref": "schema-1.json" },
+    "source_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "analysis_status",
+          "language",
+          "lines_added",
+          "lines_removed",
+          "hunk_count",
+          "structural_status",
+          "structural_changes"
+        ],
+        "properties": {
+          "path": { "type": "string" },
+          "analysis_status": { "enum": ["compared", "content_kind_changed"] },
+          "language": {
+            "type": ["string", "null"],
+            "enum": ["c", "cpp", "python", "rust", null]
+          },
+          "lines_added": { "type": ["integer", "null"], "minimum": 0 },
+          "lines_removed": { "type": ["integer", "null"], "minimum": 0 },
+          "hunk_count": { "type": ["integer", "null"], "minimum": 0 },
+          "structural_status": {
+            "enum": ["complete", "syntax_errors", "unsupported", "not_applicable"]
+          },
+          "structural_changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "action",
+                "kind",
+                "name",
+                "before_signature",
+                "after_signature"
+              ],
+              "properties": {
+                "action": { "enum": ["added", "removed", "signature_changed"] },
+                "kind": {
+                  "enum": [
+                    "function",
+                    "method",
+                    "struct",
+                    "union",
+                    "enum",
+                    "class",
+                    "interface",
+                    "type",
+                    "constant",
+                    "module",
+                    "macro",
+                    "import"
+                  ]
+                },
+                "name": { "type": "string" },
+                "before_signature": { "type": ["string", "null"] },
+                "after_signature": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "binary_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "old_kind",
+          "new_kind",
+          "old_size_bytes",
+          "new_size_bytes",
+          "byte_level_changed",
+          "semantic_status",
+          "semantic_changes"
+        ],
+        "properties": {
+          "path": { "type": "string" },
+          "old_kind": {
+            "type": ["string", "null"],
+            "enum": ["elf", "pe", "text", "unknown_binary", null]
+          },
+          "new_kind": {
+            "type": ["string", "null"],
+            "enum": ["elf", "pe", "text", "unknown_binary", null]
+          },
+          "old_size_bytes": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+          "new_size_bytes": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+          "byte_level_changed": { "type": ["boolean", "null"] },
+          "semantic_status": {
+            "enum": ["single_input", "compared", "format_mismatch", "unsupported"]
+          },
+          "semantic_changes": {
+            "type": "array",
+            "items": {
+              "$ref": "schema-6.json#/$defs/semanticChange"
+            }
+          }
+        }
+      }
+    }
+  }
+}
