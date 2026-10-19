@@ -27,7 +27,7 @@ enum LastAnalysis {
         diff: Diff,
         roots: Option<[PathBuf; 2]>,
     },
-    FileInspection(FileInspection),
+    FileInspection(Box<FileInspection>),
 }
 
 pub fn run() -> ExitCode {
@@ -159,10 +159,10 @@ fn inspect_one(editor: &mut DefaultEditor, session: &mut Session) {
     };
     match inspect_file(&path, DEFAULT_MAX_BYTES_READ) {
         Ok(inspection) => {
-            session.last_analysis = Some(LastAnalysis::FileInspection(inspection));
             if let Err(error) = write_inspection_summary(&inspection, "Inspection complete.") {
                 eprintln!("crucksware: failed to write inspection: {error}");
             }
+            session.last_analysis = Some(LastAnalysis::FileInspection(Box::new(inspection)));
         }
         Err(error) => eprintln!("crucksware: inspection failed: {error}"),
     }

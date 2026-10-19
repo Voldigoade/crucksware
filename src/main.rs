@@ -7,7 +7,7 @@ use std::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use crucksware::{
     compare,
-    inspection::{DEFAULT_MAX_BYTES_READ, inspect_file},
+    inspection::{DEFAULT_MAX_BYTES_READ, DEFAULT_MAX_ENTRIES, inspect_file_with_limits},
     limits::Limits,
     model::Diff,
     report,
@@ -78,6 +78,13 @@ struct InspectArgs {
     #[arg(
         long,
         value_parser = parse_positive_u64,
+        default_value_t = DEFAULT_MAX_ENTRIES
+    )]
+    max_entries: u64,
+
+    #[arg(
+        long,
+        value_parser = parse_positive_u64,
         default_value_t = DEFAULT_MAX_BYTES_READ
     )]
     max_bytes_read: u64,
@@ -104,13 +111,14 @@ fn main() -> ExitCode {
 }
 
 fn run_inspect(args: InspectArgs) -> ExitCode {
-    let inspection = match inspect_file(&args.path, args.max_bytes_read) {
-        Ok(inspection) => inspection,
-        Err(error) => {
-            eprintln!("crucksware: inspection failed: {error}");
-            return ExitCode::from(2);
-        }
-    };
+    let inspection =
+        match inspect_file_with_limits(&args.path, args.max_bytes_read, args.max_entries) {
+            Ok(inspection) => inspection,
+            Err(error) => {
+                eprintln!("crucksware: inspection failed: {error}");
+                return ExitCode::from(2);
+            }
+        };
 
     let stdout = io::stdout();
     let mut output = stdout.lock();

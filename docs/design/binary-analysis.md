@@ -1,9 +1,9 @@
 # Binary Analysis Design
 
-This is a future design, not a description of current Crucksware behavior. Format-specific
-binary inspection and semantic comparison are not implemented. The current generic file
-inspection reports only bounded type, size, and text/binary facts. Inputs remain read-only
-and are never executed, loaded by the operating-system loader, or mounted.
+This document records current and planned binary-analysis behavior. ELF inspection is
+implemented for a bounded set of structural facts. PE and AppImage inspection and all
+binary semantic comparison remain future work. Inputs remain read-only and are never
+executed, loaded by the operating-system loader, or mounted.
 
 ## Model
 
@@ -30,6 +30,23 @@ AppImage payload comparison should adapt a validated embedded filesystem to that
 inventory and comparison path instead of adding another filesystem comparator.
 
 ## ELF
+
+Current inspection uses `object` 0.40.0 with its read-core, standard-library, and ELF
+features. It reports class, byte order, architecture, machine, file type, entry point,
+sections, program segments, interpreter paths, dynamic dependencies, imports, exports,
+symbols, build ID, GNU stack executable flags, and GNU RELRO segment count when present.
+Section and symbol names are kept as bytes and escaped in text output. It does not make
+security verdicts or compare ELF files semantically. Dynamic library dependencies are
+read from program-header dynamic metadata, so sectionless ELF files can still report
+them. Imports, exports, and symbol tables currently require the corresponding section
+tables to be present. File-backed section and segment ranges are checked, and `PT_LOAD`
+and `PT_TLS` file sizes must not exceed their memory sizes.
+
+The default maximum ELF file size is 64 MiB. Inspection limits extracted entries to
+100,000, each copied field to 4 KiB, and total copied names to 16 MiB. The parser crate
+documents limited denial-of-service protection for hostile overlapping structures, so
+these bounds reduce exposure but do not establish parser safety. Malformed-input corpus
+and fuzz work remain required before stronger robustness claims.
 
 Report facts that can be read directly and consistently: class, byte order, machine,
 file type, entry point, sections and segments, program interpreter when present,
@@ -88,15 +105,15 @@ and limits.
 
 ## Parser choice and input limits
 
-The current leading candidate is [`object`](https://docs.rs/object/0.40.0/object/).
-Its unified read API covers ELF and PE/COFF and exposes common sections, symbols,
-imports, exports, and entry-point facts; format-specific read APIs can fill gaps. Its
-current release is dual-licensed MIT or Apache-2.0. The project’s open discussion about
-an exhaustive validation pass and bounded work on untrusted input is directly relevant:
-adoption is conditional on a documented input-risk review and tests that demonstrate
-acceptable limits. A wrapper that limits file bytes alone is not enough if parser work
-or allocation is unbounded. The project has an [open discussion about exhaustive
-validation and bounded work](https://github.com/gimli-rs/object/issues/874).
+The selected parser is [`object`](https://docs.rs/object/0.40.0/object/), with only its
+read-core, standard-library, and ELF features enabled. Its unified read API exposes
+sections, symbols, imports, exports, and entry-point facts, while its ELF-specific API
+provides program headers and interpreter data. The crate is dual-licensed MIT or
+Apache-2.0. Its project has an [open discussion about exhaustive validation and bounded
+work](https://github.com/gimli-rs/object/issues/874). Crucksware applies file, entry,
+field, and copied-name limits, but parser work is not fully bounded by those checks.
+That limitation requires malformed-input and fuzz testing before making stronger
+robustness claims.
 
 [`goblin`](https://docs.rs/goblin/0.10.7/goblin/) is an alternative with
 format-specific ELF and PE APIs; its PE API includes resources and certificate-table
@@ -105,8 +122,6 @@ facts and hostile-input behavior qualify. If PE resource or certificate coverage
 release requirement and the `object` API is insufficient, evaluate `goblin` directly
 before adding a second parser. Do not combine parser outputs without tests that define
 which parser owns each fact.
-
-No binary parser dependency is added by this design task.
 
 Parser implementation must enforce checked offsets and lengths, and explicit bounds on
 file size, records, nesting, name bytes, and any decompressed data. Do not materialize

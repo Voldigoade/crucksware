@@ -83,6 +83,7 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
     assert_eq!(inspect_help.status.code(), Some(0));
     let inspect_help_text = String::from_utf8(inspect_help.stdout).unwrap();
     assert!(inspect_help_text.contains("--max-bytes-read"));
+    assert!(inspect_help_text.contains("--max-entries"));
     assert!(inspect_help_text.contains("without executing it"));
 
     let version = binary().arg("--version").output().unwrap();
@@ -255,17 +256,16 @@ fn inspect_reports_basic_file_facts_and_keeps_stdout_clean() {
 }
 
 #[test]
-fn inspect_reports_format_candidates_without_claiming_semantic_parsing() {
+fn inspect_rejects_truncated_elf_without_a_partial_report() {
     let temporary = tempfile::tempdir().unwrap();
     let path = temporary.path().join("not-validated.exe");
     fs::write(&path, b"\x7fELF").unwrap();
 
     let output = run_inspect(&path, &[]);
 
-    assert_eq!(output.status.code(), Some(0));
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Detected kind: ELF candidate"));
-    assert!(stdout.contains("Semantic format parsing: not performed"));
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid ELF input"));
 }
 
 #[test]
@@ -283,6 +283,11 @@ fn inspect_errors_emit_no_partial_report_and_limits_are_positive() {
     assert_eq!(invalid_limit.status.code(), Some(2));
     assert!(invalid_limit.stdout.is_empty());
     assert!(!invalid_limit.stderr.is_empty());
+
+    let invalid_entry_limit = run_inspect(&path, &["--max-entries=0"]);
+    assert_eq!(invalid_entry_limit.status.code(), Some(2));
+    assert!(invalid_entry_limit.stdout.is_empty());
+    assert!(!invalid_entry_limit.stderr.is_empty());
 
     let directory = run_inspect(temporary.path(), &[]);
     assert_eq!(directory.status.code(), Some(2));
