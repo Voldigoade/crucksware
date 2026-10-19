@@ -532,3 +532,105 @@ fn summary_counters_fail_instead_of_wrapping() {
     ));
     assert!(diff.changes.is_empty());
 }
+
+#[test]
+fn comparison_progress_reports_real_inventory_work_and_preserves_the_diff() {
+    use crate::progress::{ProgressEvent, ProgressPhase};
+
+    let old = tempdir().unwrap();
+    let new = tempdir().unwrap();
+    fs::write(old.path().join("changed"), b"old").unwrap();
+    fs::write(old.path().join("removed"), b"gone").unwrap();
+    fs::write(new.path().join("changed"), b"new").unwrap();
+    fs::write(new.path().join("added"), b"here").unwrap();
+
+    let expected = compare(old.path(), new.path(), Limits::default()).unwrap();
+    let mut events = Vec::new();
+    let actual = compare_with_progress(old.path(), new.path(), Limits::default(), |event| {
+        events.push(event);
+    })
+    .unwrap();
+
+    assert_eq!(actual, expected);
+    assert!(events.starts_with(&[
+        ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::Inventory(Side::Old),
+            total: None,
+        },
+        ProgressEvent::EntryDiscovered {
+            side: Side::Old,
+            entries: 1,
+        },
+        ProgressEvent::EntryDiscovered {
+            side: Side::Old,
+            entries: 2,
+        },
+        ProgressEvent::PhaseCompleted {
+            phase: ProgressPhase::Inventory(Side::Old),
+        },
+    ]));
+
+    assert!(events.contains(&ProgressEvent::PhaseStarted {
+        phase: ProgressPhase::Comparing,
+        total: None,
+    }));
+    assert!(events.contains(&ProgressEvent::PhaseTotalKnown {
+        phase: ProgressPhase::Comparing,
+        total: 3,
+    }));
+    let comparison_progress = events
+        .iter()
+        .filter_map(|event| match event {
+            ProgressEvent::PhaseProgress {
+                phase: ProgressPhase::Comparing,
+                completed,
+                total,
+            } => Some((*completed, *total)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(comparison_progress, [(1, 3), (2, 3), (3, 3)]);
+    let byte_counts = events
+        .iter()
+        .filter_map(|event| match event {
+            ProgressEvent::BytesRead { total_bytes_read } => Some(*total_bytes_read),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(byte_counts, [3, 6]);
+    let change_categories = events
+        .iter()
+        .filter_map(|event| match event {
+            ProgressEvent::ChangeDiscovered { category } => Some(*category),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        change_categories,
+        [Category::Modified, Category::Removed, Category::Added]
+    );
+    assert!(events.contains(&ProgressEvent::PhaseCompleted {
+        phase: ProgressPhase::Comparing,
+    }));
+    for side in [Side::Old, Side::New] {
+        assert!(events.contains(&ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::Revalidation(side),
+            total: Some(3),
+        }));
+        let completed = events
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::PhaseProgress {
+                    phase: ProgressPhase::Revalidation(event_side),
+                    completed,
+                    total: 3,
+                } if *event_side == side => Some(*completed),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(completed, [1, 2, 3]);
+        assert!(events.contains(&ProgressEvent::PhaseCompleted {
+            phase: ProgressPhase::Revalidation(side),
+        }));
+    }
+}

@@ -9,9 +9,11 @@ use crate::{
     limits::Budget,
     model::{Entry, ObservedEntry, Stamp},
     path::RelPath,
+    progress::{ProgressEvent, emit},
     scan::{absolute_path, changed, io_error, stamp, verify_stamp},
 };
 
+#[cfg(test)]
 pub(crate) fn equal_files(
     old_root: &Path,
     new_root: &Path,
@@ -20,6 +22,29 @@ pub(crate) fn equal_files(
     new: &ObservedEntry,
     budget: &mut Budget,
 ) -> Result<bool, DiffError> {
+    equal_files_with_progress(
+        old_root,
+        new_root,
+        path,
+        old,
+        new,
+        budget,
+        &mut None::<fn(ProgressEvent)>,
+    )
+}
+
+pub(crate) fn equal_files_with_progress<F>(
+    old_root: &Path,
+    new_root: &Path,
+    path: &RelPath,
+    old: &ObservedEntry,
+    new: &ObservedEntry,
+    budget: &mut Budget,
+    progress: &mut Option<F>,
+) -> Result<bool, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
     let old_path = absolute_path(old_root, path);
     let new_path = absolute_path(new_root, path);
     let old_size = regular_size(old, Side::Old, &old_path)?;
@@ -37,12 +62,13 @@ pub(crate) fn equal_files(
             .map_err(|source| io_error("open file", Side::New, &new_path, source))?;
         verify_handle(&old_file, &old.stamp, Side::Old, &old_path)?;
         verify_handle(&new_file, &new.stamp, Side::New, &new_path)?;
-        let equal = equal_readers(
+        let equal = equal_readers_with_progress(
             &mut old_file,
             &mut new_file,
             old_size,
             (&old_path, &new_path),
             budget,
+            progress,
         )?;
         verify_handle(&old_file, &old.stamp, Side::Old, &old_path)?;
         verify_handle(&new_file, &new.stamp, Side::New, &new_path)?;
@@ -73,6 +99,7 @@ fn verify_handle(file: &File, expected: &Stamp, side: Side, path: &Path) -> Resu
     Ok(())
 }
 
+#[cfg(test)]
 fn equal_readers(
     old: &mut impl Read,
     new: &mut impl Read,
@@ -80,6 +107,27 @@ fn equal_readers(
     paths: (&Path, &Path),
     budget: &mut Budget,
 ) -> Result<bool, DiffError> {
+    equal_readers_with_progress(
+        old,
+        new,
+        expected_len,
+        paths,
+        budget,
+        &mut None::<fn(ProgressEvent)>,
+    )
+}
+
+fn equal_readers_with_progress<F>(
+    old: &mut impl Read,
+    new: &mut impl Read,
+    expected_len: u64,
+    paths: (&Path, &Path),
+    budget: &mut Budget,
+    progress: &mut Option<F>,
+) -> Result<bool, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
     let mut left = [0; 65_536];
     let mut right = [0; 65_536];
     let mut remaining = expected_len;
@@ -89,7 +137,14 @@ fn equal_readers(
         let count = remaining
             .min(left.len() as u64)
             .min(budget.remaining_read_bytes() / 2) as usize;
-        let count = read_chunk(old, &mut left[..count], Side::Old, paths.0, budget)?;
+        let count = read_chunk(
+            old,
+            &mut left[..count],
+            Side::Old,
+            paths.0,
+            budget,
+            progress,
+        )?;
         let mut compared = 0;
         while compared < count {
             let read = read_chunk(
@@ -98,6 +153,7 @@ fn equal_readers(
                 Side::New,
                 paths.1,
                 budget,
+                progress,
             )?;
             if left[compared..compared + read] != right[..read] {
                 return Ok(false);
@@ -109,18 +165,30 @@ fn equal_readers(
     Ok(true)
 }
 
-fn read_chunk(
+fn read_chunk<F>(
     reader: &mut impl Read,
     buffer: &mut [u8],
     side: Side,
     path: &Path,
     budget: &mut Budget,
-) -> Result<usize, DiffError> {
+    progress: &mut Option<F>,
+) -> Result<usize, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
     loop {
         match reader.read(buffer) {
             Ok(0) => return Err(changed(side, path)),
             Ok(count) => {
                 budget.charge_read(count as u64)?;
+                if progress.is_some() {
+                    emit(
+                        progress,
+                        ProgressEvent::BytesRead {
+                            total_bytes_read: budget.bytes_read(),
+                        },
+                    );
+                }
                 return Ok(count);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,

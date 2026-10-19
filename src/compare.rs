@@ -1,43 +1,90 @@
 use std::path::Path;
 
 use crate::{
-    content::equal_files,
+    content::equal_files_with_progress,
     error::{DiffError, Resource, Side},
     limits::{Budget, Limits},
     model::{Category, Change, ChangedField, Diff, Entry, Snapshot},
-    scan::{revalidate, scan},
+    progress::{ProgressEvent, ProgressPhase, emit},
+    scan::{revalidate_with_progress, scan_with_progress},
 };
 
 /// Compares extracted Linux trees that remain stable for the entire operation.
 /// Path-based traversal cannot contain hostile concurrent path replacement.
 /// Reads can cause filesystem-managed atime updates.
 pub fn compare(old: &Path, new: &Path, limits: Limits) -> Result<Diff, DiffError> {
-    let mut budget = Budget::new(limits);
-    let old = scan(old, Side::Old, &mut budget)?;
-    let new = scan(new, Side::New, &mut budget)?;
-    compare_snapshots(&old, &new, &mut budget)
+    compare_inner(old, new, limits, None::<fn(ProgressEvent)>)
 }
 
+pub fn compare_with_progress(
+    old: &Path,
+    new: &Path,
+    limits: Limits,
+    progress: impl FnMut(ProgressEvent),
+) -> Result<Diff, DiffError> {
+    compare_inner(old, new, limits, Some(progress))
+}
+
+fn compare_inner<F>(
+    old: &Path,
+    new: &Path,
+    limits: Limits,
+    mut progress: Option<F>,
+) -> Result<Diff, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
+    let mut budget = Budget::new(limits);
+    let old = scan_with_progress(old, Side::Old, &mut budget, &mut progress)?;
+    let new = scan_with_progress(new, Side::New, &mut budget, &mut progress)?;
+    compare_snapshots_with_progress(&old, &new, &mut budget, &mut progress)
+}
+
+#[cfg(test)]
 fn compare_snapshots(
     old: &Snapshot,
     new: &Snapshot,
     budget: &mut Budget,
 ) -> Result<Diff, DiffError> {
+    compare_snapshots_with_progress(old, new, budget, &mut None::<fn(ProgressEvent)>)
+}
+
+fn compare_snapshots_with_progress<F>(
+    old: &Snapshot,
+    new: &Snapshot,
+    budget: &mut Budget,
+    progress: &mut Option<F>,
+) -> Result<Diff, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
     let mut diff = Diff::default();
+    let phase = ProgressPhase::Comparing;
+    let total = if progress.is_some() {
+        emit(progress, ProgressEvent::PhaseStarted { phase, total: None });
+        let total = union_entry_count(old, new)?;
+        emit(progress, ProgressEvent::PhaseTotalKnown { phase, total });
+        Some(total)
+    } else {
+        None
+    };
+    let mut completed = 0;
     for (path, before) in &old.entries {
         if let Some(after) = new.entries.get(path) {
             let content_equal = if matches!(
                 (&before.entry, &after.entry),
                 (Entry::File { .. }, Entry::File { .. })
             ) {
-                equal_files(&old.root, &new.root, path, before, after, budget)?
+                equal_files_with_progress(
+                    &old.root, &new.root, path, before, after, budget, progress,
+                )?
             } else {
                 true
             };
             if let Some((category, changed_fields)) =
                 classify(&before.entry, &after.entry, content_equal)
             {
-                push_change(
+                push_change_with_progress(
                     &mut diff,
                     Change {
                         path: path.clone(),
@@ -46,12 +93,13 @@ fn compare_snapshots(
                         before: Some(before.entry.clone()),
                         after: Some(after.entry.clone()),
                     },
+                    progress,
                 )?;
             } else {
                 increment(&mut diff.summary.unchanged)?;
             }
         } else {
-            push_change(
+            push_change_with_progress(
                 &mut diff,
                 Change {
                     path: path.clone(),
@@ -60,12 +108,24 @@ fn compare_snapshots(
                     before: Some(before.entry.clone()),
                     after: None,
                 },
+                progress,
             )?;
+        }
+        if let Some(total) = total {
+            increment(&mut completed)?;
+            emit(
+                progress,
+                ProgressEvent::PhaseProgress {
+                    phase,
+                    completed,
+                    total,
+                },
+            );
         }
     }
     for (path, after) in &new.entries {
         if !old.entries.contains_key(path) {
-            push_change(
+            push_change_with_progress(
                 &mut diff,
                 Change {
                     path: path.clone(),
@@ -74,13 +134,54 @@ fn compare_snapshots(
                     before: None,
                     after: Some(after.entry.clone()),
                 },
+                progress,
             )?;
+            if let Some(total) = total {
+                increment(&mut completed)?;
+                emit(
+                    progress,
+                    ProgressEvent::PhaseProgress {
+                        phase,
+                        completed,
+                        total,
+                    },
+                );
+            }
         }
     }
+    if total.is_some() {
+        emit(progress, ProgressEvent::PhaseCompleted { phase });
+    }
     diff.changes.sort_by(|a, b| a.path.cmp(&b.path));
-    revalidate(old, Side::Old)?;
-    revalidate(new, Side::New)?;
+    revalidate_with_progress(old, Side::Old, progress)?;
+    revalidate_with_progress(new, Side::New, progress)?;
     Ok(diff)
+}
+
+fn union_entry_count(old: &Snapshot, new: &Snapshot) -> Result<u64, DiffError> {
+    let mut old_paths = old.entries.keys().peekable();
+    let mut new_paths = new.entries.keys().peekable();
+    let mut count = 0;
+    while old_paths.peek().is_some() || new_paths.peek().is_some() {
+        match (old_paths.peek(), new_paths.peek()) {
+            (Some(old), Some(new)) if old == new => {
+                old_paths.next();
+                new_paths.next();
+            }
+            (Some(old), Some(new)) if old < new => {
+                old_paths.next();
+            }
+            (Some(_), Some(_)) | (None, Some(_)) => {
+                new_paths.next();
+            }
+            (Some(_), None) => {
+                old_paths.next();
+            }
+            (None, None) => break,
+        }
+        increment(&mut count)?;
+    }
+    Ok(count)
 }
 
 fn classify(
@@ -152,6 +253,20 @@ fn push_change(diff: &mut Diff, change: Change) -> Result<(), DiffError> {
     };
     increment(counter)?;
     diff.changes.push(change);
+    Ok(())
+}
+
+fn push_change_with_progress<F>(
+    diff: &mut Diff,
+    change: Change,
+    progress: &mut Option<F>,
+) -> Result<(), DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
+    let category = change.category;
+    push_change(diff, change)?;
+    emit(progress, ProgressEvent::ChangeDiscovered { category });
     Ok(())
 }
 
