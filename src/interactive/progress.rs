@@ -7,14 +7,17 @@ use crucksware::{
     error::Side,
     progress::{ProgressEvent, ProgressPhase},
 };
-use indicatif::{ProgressBar, ProgressDrawTarget};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 const REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
+const SPINNER_TEMPLATE: &str = "{spinner} {msg} [{elapsed}]";
+const BOUNDED_TEMPLATE: &str = "{bar:24} {percent:>3}% {msg} [{elapsed}]";
 
 pub(super) struct ProgressRenderer {
     state: ProgressState,
     bar: Option<ProgressBar>,
+    determinate: bool,
     last_message_update: Instant,
 }
 
@@ -27,6 +30,7 @@ impl ProgressRenderer {
         stderr_is_terminal.then(|| Self {
             state: ProgressState::default(),
             bar: None,
+            determinate: false,
             last_message_update: Instant::now(),
         })
     }
@@ -39,15 +43,18 @@ impl ProgressRenderer {
             }
             ProgressEvent::PhaseTotalKnown { .. } => {
                 self.state.observe(event);
+                self.update_bar_progress();
                 self.update_message(true);
             }
             ProgressEvent::PhaseCompleted { .. } => {
+                self.update_bar_progress();
                 self.update_message(true);
                 self.state.observe(event);
                 self.finish();
             }
             _ => {
                 self.state.observe(event);
+                self.update_bar_progress();
                 self.update_message(false);
             }
         }
@@ -63,9 +70,27 @@ impl ProgressRenderer {
         self.finish();
         let bar = ProgressBar::new_spinner();
         bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(10));
+        bar.set_style(spinner_style());
         bar.enable_steady_tick(SPINNER_INTERVAL);
+        self.determinate = false;
         self.bar = Some(bar);
+        self.update_bar_progress();
         self.update_message(true);
+    }
+
+    fn update_bar_progress(&mut self) {
+        let Some(bar) = &self.bar else {
+            return;
+        };
+        let Some((position, total)) = self.state.bounded_progress() else {
+            return;
+        };
+        if !self.determinate {
+            bar.set_length(total);
+            bar.set_style(bounded_style());
+            self.determinate = true;
+        }
+        bar.set_position(position);
     }
 
     fn update_message(&mut self, force: bool) {
@@ -130,6 +155,11 @@ impl ProgressState {
         }
     }
 
+    fn bounded_progress(&self) -> Option<(u64, u64)> {
+        let total = self.total.filter(|total| *total > 0)?;
+        Some((self.completed, total))
+    }
+
     fn message(&self) -> Option<String> {
         let suffix = match self.phase? {
             ProgressPhase::Inventory(side) => {
@@ -160,6 +190,14 @@ impl ProgressState {
             format_changes(self.changes)
         ))
     }
+}
+
+fn spinner_style() -> ProgressStyle {
+    ProgressStyle::with_template(SPINNER_TEMPLATE).expect("spinner template is valid")
+}
+
+fn bounded_style() -> ProgressStyle {
+    ProgressStyle::with_template(BOUNDED_TEMPLATE).expect("bounded progress template is valid")
 }
 
 fn format_changes(count: u64) -> String {
@@ -281,5 +319,34 @@ mod tests {
             state.message().as_deref(),
             Some("Verifying new: 2 / 12,482 checks | 184.7 MiB read | 17 changes found")
         );
+    }
+
+    #[test]
+    fn bounded_progress_requires_a_positive_reported_total() {
+        let mut state = ProgressState::default();
+        state.observe(ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::Comparing,
+            total: None,
+        });
+        assert_eq!(state.bounded_progress(), None);
+
+        state.observe(ProgressEvent::PhaseTotalKnown {
+            phase: ProgressPhase::Comparing,
+            total: 0,
+        });
+        assert_eq!(state.bounded_progress(), None);
+
+        state.observe(ProgressEvent::PhaseTotalKnown {
+            phase: ProgressPhase::Comparing,
+            total: 12_481,
+        });
+        assert_eq!(state.bounded_progress(), Some((0, 12_481)));
+
+        state.observe(ProgressEvent::PhaseProgress {
+            phase: ProgressPhase::Comparing,
+            completed: 8_921,
+            total: 12_481,
+        });
+        assert_eq!(state.bounded_progress(), Some((8_921, 12_481)));
     }
 }
