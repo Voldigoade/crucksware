@@ -279,10 +279,13 @@ fn resource_identifier(
                     limit: MAX_FIELD_BYTES as u64,
                 });
             }
-            let name = name
-                .to_string_lossy(directory)
-                .map_err(|error| format_error(path, error))?;
-            Ok(PeResourceId::Name(budget.copy_bytes(name.as_bytes())?))
+            let mut decoded = String::new();
+            for character in char::decode_utf16(units.iter().map(|unit| unit.get(LE))) {
+                decoded.push(
+                    character.map_err(|_| format_error(path, "invalid UTF-16 PE resource name"))?,
+                );
+            }
+            Ok(PeResourceId::Name(budget.copy_bytes(decoded.as_bytes())?))
         }
     }
 }
