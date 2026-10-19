@@ -1,0 +1,439 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing or new release tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.release_tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    name: Build and publish Linux x86_64 release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      attestations: write
+      artifact-metadata: write
+      contents: write
+      id-token: write
+    env:
+      CARGO_TERM_COLOR: never
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the exact release ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.release_tag && format('refs/tags/{0}', github.event.inputs.release_tag) || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate source ref and package version
+        id: source
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.release_tag }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$INPUT_TAG"
+            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "Manual release builds must be dispatched from main." >&2
+              exit 1
+            fi
+          else
+            tag="$REF_NAME"
+          fi
+          python3 - "$tag" <<'PY'
+          import re
+          import sys
+
+          tag = sys.argv[1]
+          if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", tag):
+              raise SystemExit(f"Invalid semantic version tag: {tag!r}")
+          PY
+          tag_commit="$(git rev-parse "refs/tags/$tag^{commit}")"
+          head_commit="$(git rev-parse 'HEAD^{commit}')"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "Checked out commit does not match $tag: $head_commit != $tag_commit" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          cargo_version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          lock_version="$(python3 -c 'import tomllib; d=tomllib.load(open("Cargo.lock", "rb")); print(next(p["version"] for p in d["package"] if p["name"] == "crucksware"))')"
+          if [[ "$cargo_version" != "$version" || "$lock_version" != "$version" ]]; then
+            echo "Tag, Cargo.toml, and Cargo.lock versions must match: $version / $cargo_version / $lock_version" >&2
+            exit 1
+          fi
+          printf 'tag=%s\nversion=%s\ncommit=%s\n' "$tag" "$version" "$head_commit" >> "$GITHUB_OUTPUT"
+          printf 'Release tag: %s\nSource commit: %s\nPackage version: %s\n' "$tag" "$head_commit" "$version" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Rust 1.99.1
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy --no-self-update
+          rustup default 1.99.1
+          rustc -Vv | tee "$RUNNER_TEMP/rustc-version.txt"
+          cargo -V
+
+      - name: Verify toolchain and lockfile
+        id: build-info
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ "$host" != "x86_64-unknown-linux-gnu" ]]; then
+            echo "Unexpected release host target: $host" >&2
+            exit 1
+          fi
+          lock_sha="$(sha256sum Cargo.lock | cut -d ' ' -f 1)"
+          printf 'host=%s\nlock_sha=%s\n' "$host" "$lock_sha" >> "$GITHUB_OUTPUT"
+          printf 'Host target: %s\nCargo.lock SHA-256: %s\n' "$host" "$lock_sha" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run release qualification
+        run: |
+          cargo fmt --check
+          cargo check --locked --all-targets
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo test --locked --all-features
+          cargo test --release --locked --all-features
+          cargo tree --locked
+          cargo tree --locked --duplicates
+          cargo package --list --locked
+
+      - name: Build release binary twice
+        id: artifacts
+        shell: bash
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_TAG: ${{ steps.source.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          LOCK_SHA: ${{ steps.build-info.outputs.lock_sha }}
+          HOST_TARGET: ${{ steps.build-info.outputs.host }}
+        run: |
+          set -euo pipefail
+          target_a="$RUNNER_TEMP/target-a"
+          target_b="$RUNNER_TEMP/target-b"
+          CARGO_TARGET_DIR="$target_a" cargo build --release --locked
+          CARGO_TARGET_DIR="$target_b" cargo build --release --locked
+          binary_a="$target_a/release/crucksware"
+          binary_b="$target_b/release/crucksware"
+          hash_a="$(sha256sum "$binary_a" | cut -d ' ' -f 1)"
+          hash_b="$(sha256sum "$binary_b" | cut -d ' ' -f 1)"
+          if [[ "$hash_a" == "$hash_b" ]]; then
+            reproducible=true
+          else
+            reproducible=false
+          fi
+
+          "$binary_a" --version
+          "$binary_a" --help >/dev/null
+          smoke="$RUNNER_TEMP/smoke"
+          mkdir -p "$smoke/old" "$smoke/new"
+          printf 'same\n' > "$smoke/old/same.txt"
+          printf 'same\n' > "$smoke/new/same.txt"
+          set +e
+          "$binary_a" compare "$smoke/old" "$smoke/new" --format json > "$smoke/equal.json" 2> "$smoke/equal.err"
+          equal_status=$?
+          set -e
+          if [[ "$equal_status" -ne 0 || -s "$smoke/equal.err" ]]; then
+            echo "Equal-tree CLI smoke test failed with status $equal_status" >&2
+            exit 1
+          fi
+          printf 'changed\n' > "$smoke/new/same.txt"
+          set +e
+          "$binary_a" compare "$smoke/old" "$smoke/new" --format json > "$smoke/changed.json" 2> "$smoke/changed.err"
+          changed_status=$?
+          set -e
+          if [[ "$changed_status" -ne 1 || -s "$smoke/changed.err" ]]; then
+            echo "Changed-tree CLI smoke test failed with status $changed_status" >&2
+            exit 1
+          fi
+          python3 -m json.tool "$smoke/equal.json" >/dev/null
+          python3 -m json.tool "$smoke/changed.json" >/dev/null
+          printf 'input\n' > "$smoke/input.bin"
+          "$binary_a" inspect "$smoke/input.bin" >/dev/null
+
+          package="$RUNNER_TEMP/package"
+          mkdir -p "$package"
+          install -m 0755 "$binary_a" "$package/crucksware"
+          install -m 0644 README.md LICENSE-MIT LICENSE-APACHE "$package/"
+          binary_hash="$(sha256sum "$package/crucksware" | cut -d ' ' -f 1)"
+          archive="$RUNNER_TEMP/crucksware-${VERSION}-${HOST_TARGET}.tar.gz"
+          cat > "$package/BUILDINFO.txt" <<EOF
+          Crucksware release build
+          Version: ${VERSION}
+          Source tag: ${SOURCE_TAG}
+          Source commit: ${SOURCE_COMMIT}
+          Host target: ${HOST_TARGET}
+          Cargo.lock SHA-256: ${LOCK_SHA}
+          Rust toolchain:
+          $(cat "$RUNNER_TEMP/rustc-version.txt")
+          Release binary SHA-256: ${binary_hash}
+          Independent clean-target builds matched: ${reproducible}
+          EOF
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -cf "$RUNNER_TEMP/package-final.tar" -C "$package" crucksware README.md LICENSE-MIT LICENSE-APACHE BUILDINFO.txt
+          gzip -n -9 -c "$RUNNER_TEMP/package-final.tar" > "$archive"
+          printf '%s  %s\n' "$(sha256sum "$archive" | cut -d ' ' -f 1)" "$(basename "$archive")" > "$RUNNER_TEMP/SHA256SUMS"
+          tar -tzf "$archive" | tee "$RUNNER_TEMP/archive-contents.txt"
+          test "$(tar -tzf "$archive" | wc -l)" -eq 5
+          printf 'archive=%s\nsums=%s\nbinary=%s\nreproducible=%s\n' "$archive" "$RUNNER_TEMP/SHA256SUMS" "$package/crucksware" "$reproducible" >> "$GITHUB_OUTPUT"
+          {
+            printf 'Release binary SHA-256: %s\n' "$binary_hash"
+            printf 'Independent clean-target builds matched: %s\n' "$reproducible"
+            printf 'Archive SHA-256: %s\n' "$(sha256sum "$archive" | cut -d ' ' -f 1)"
+            printf 'Archive contents:\n\n```\n'
+            cat "$RUNNER_TEMP/archive-contents.txt"
+            printf '```\n'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest release archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.artifacts.outputs.archive }}
+
+      - name: Attest release checksum file
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.artifacts.outputs.sums }}
+
+      - name: Attest release executable
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.artifacts.outputs.binary }}
+
+      - name: Publish release assets
+        shell: bash
+        env:
+          TAG: ${{ steps.source.outputs.tag }}
+          VERSION: ${{ steps.source.outputs.version }}
+          ARCHIVE: ${{ steps.artifacts.outputs.archive }}
+          SUMS: ${{ steps.artifacts.outputs.sums }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_json="$RUNNER_TEMP/release.json"
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > "$release_json"
+            archive_name="$(basename "$ARCHIVE")"
+            archive_digest="sha256:$(sha256sum "$ARCHIVE" | cut -d ' ' -f 1)"
+            sums_digest="sha256:$(sha256sum "$SUMS" | cut -d ' ' -f 1)"
+            already_current="$(python3 - "$release_json" "$archive_name" "$archive_digest" "$sums_digest" <<'PY'
+          import json
+          import sys
+
+          path, archive_name, archive_digest, sums_digest = sys.argv[1:]
+          release = json.load(open(path, encoding="utf-8"))
+          assets = {asset["name"]: asset.get("digest") for asset in release["assets"]}
+          print(str(
+              assets.get(archive_name) == archive_digest
+              and assets.get("SHA256SUMS") == sums_digest
+          ).lower())
+          PY
+            )"
+            if [[ "$already_current" == true ]]; then
+              echo "Release assets already match this verified build; preserving their download history."
+            else
+            python3 - "$release_json" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = {
+              f"crucksware-{release['tag_name'][1:]}-x86_64-unknown-linux-gnu.tar.gz",
+              "SHA256SUMS",
+          }
+          assets = {asset["name"]: asset["download_count"] for asset in release["assets"]}
+          used = {name: assets[name] for name in expected if name in assets and assets[name] != 0}
+          if used:
+              raise SystemExit(f"Refusing to replace assets with nonzero download counts: {used}")
+          PY
+            stage_suffix="backfill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            staged_archive="$RUNNER_TEMP/${archive_name}.${stage_suffix}"
+            staged_sums="$RUNNER_TEMP/SHA256SUMS.${stage_suffix}"
+            cp "$ARCHIVE" "$staged_archive"
+            cp "$SUMS" "$staged_sums"
+            gh release upload "$TAG" "$staged_archive" "$staged_sums"
+
+            staged_download="$RUNNER_TEMP/staged-download"
+            mkdir -p "$staged_download"
+            gh release download "$TAG" --dir "$staged_download" \
+              --pattern "$(basename "$staged_archive")" \
+              --pattern "$(basename "$staged_sums")"
+            cp "$staged_download/$(basename "$staged_archive")" "$staged_download/$archive_name"
+            cp "$staged_download/$(basename "$staged_sums")" "$staged_download/SHA256SUMS"
+            (cd "$staged_download" && sha256sum -c SHA256SUMS)
+            gh attestation verify "$staged_download/$(basename "$staged_archive")" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref refs/heads/main
+
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > "$release_json"
+            python3 - "$release_json" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = {
+              f"crucksware-{release['tag_name'][1:]}-x86_64-unknown-linux-gnu.tar.gz",
+              "SHA256SUMS",
+          }
+          assets = {asset["name"]: asset["download_count"] for asset in release["assets"]}
+          used = {name: assets[name] for name in expected if assets.get(name, 0) != 0}
+          if used:
+              raise SystemExit(f"Refusing replacement after an existing asset was downloaded: {used}")
+          PY
+            old_archive_id="$(python3 - "$release_json" "$archive_name" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          for asset in release["assets"]:
+              if asset["name"] == sys.argv[2]:
+                  print(asset["id"])
+                  break
+          PY
+            )"
+            old_sums_id="$(python3 - "$release_json" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          for asset in release["assets"]:
+              if asset["name"] == "SHA256SUMS":
+                  print(asset["id"])
+                  break
+          PY
+            )"
+            staged_archive_name="$(basename "$staged_archive")"
+            staged_archive_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+              --jq ".assets[] | select(.name == \"${staged_archive_name}\") | .id")"
+            staged_sums_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+              --jq ".assets[] | select(.name == \"$(basename "$staged_sums")\") | .id")"
+            test -n "$staged_archive_id"
+            test -n "$staged_sums_id"
+
+            backup_suffix="previous-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            backup_archive_name="${archive_name}.${backup_suffix}"
+            backup_sums_name="SHA256SUMS.${backup_suffix}"
+            swap_started=false
+            swap_complete=false
+            restore_release_assets() {
+              status=$?
+              if [[ "$swap_started" == true && "$swap_complete" != true ]]; then
+                gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${staged_archive_id}" -f "name=$(basename "$staged_archive")" >/dev/null 2>&1 || true
+                gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${staged_sums_id}" -f "name=$(basename "$staged_sums")" >/dev/null 2>&1 || true
+                if [[ -n "$old_archive_id" ]]; then
+                  gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${old_archive_id}" -f "name=${archive_name}" >/dev/null 2>&1 || true
+                fi
+                if [[ -n "$old_sums_id" ]]; then
+                  gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${old_sums_id}" -f name=SHA256SUMS >/dev/null 2>&1 || true
+                fi
+              fi
+              exit "$status"
+            }
+            trap restore_release_assets ERR
+            swap_started=true
+            if [[ -n "$old_archive_id" ]]; then
+              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${old_archive_id}" -f "name=${backup_archive_name}" >/dev/null
+            fi
+            if [[ -n "$old_sums_id" ]]; then
+              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${old_sums_id}" -f "name=${backup_sums_name}" >/dev/null
+            fi
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${staged_archive_id}" -f "name=${archive_name}" >/dev/null
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/${staged_sums_id}" -f name=SHA256SUMS >/dev/null
+
+            final_download="$RUNNER_TEMP/final-download"
+            mkdir -p "$final_download"
+            gh release download "$TAG" --dir "$final_download" \
+              --pattern "$archive_name" --pattern SHA256SUMS
+            (cd "$final_download" && sha256sum -c SHA256SUMS)
+            gh attestation verify "$final_download/$archive_name" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref refs/heads/main
+            swap_complete=true
+            trap - ERR
+            if [[ -n "$old_archive_id" ]]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${old_archive_id}" >/dev/null \
+                || echo "Previous archive retained under ${backup_archive_name}." >&2
+            fi
+            if [[ -n "$old_sums_id" ]]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${old_sums_id}" >/dev/null \
+                || echo "Previous checksum file retained under ${backup_sums_name}." >&2
+            fi
+            fi
+
+            note="$RUNNER_TEMP/release-notes.md"
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .body > "$note"
+            python3 - "$note" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          body = path.read_text(encoding="utf-8").rstrip()
+          statement = "Release binaries were rebuilt and verified in GitHub Actions from the exact release tag."
+          if statement not in body:
+              body = f"{body}\n\n{statement}" if body else statement
+          path.write_text(body + "\n", encoding="utf-8")
+          PY
+            gh release edit "$TAG" --notes-file "$note"
+          else
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              existing_assets="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.assets | length')"
+              if [[ "$existing_assets" != "0" ]]; then
+                echo "Release $TAG already has assets. Use the controlled manual backfill path." >&2
+                exit 1
+              fi
+            else
+              release_args=(--verify-tag --title "Crucksware $TAG")
+              if [[ "$VERSION" == *-* ]]; then
+                release_args+=(--prerelease)
+              fi
+              gh release create "$TAG" "${release_args[@]}" \
+                --notes "Linux x86_64 binaries were built and tested in GitHub Actions from the exact source tag. The release archive is accompanied by SHA-256 checksums and GitHub artifact provenance."
+            fi
+            gh release upload "$TAG" "$ARCHIVE" "$SUMS"
+          fi
+
+      - name: Verify published assets and provenance
+        shell: bash
+        env:
+          TAG: ${{ steps.source.outputs.tag }}
+          ARCHIVE: ${{ steps.artifacts.outputs.archive }}
+          SUMS: ${{ steps.artifacts.outputs.sums }}
+        run: |
+          set -euo pipefail
+          download="$RUNNER_TEMP/download"
+          mkdir -p "$download"
+          gh release download "$TAG" --dir "$download" --pattern "$(basename "$ARCHIVE")" --pattern SHA256SUMS
+          cmp "$SUMS" "$download/SHA256SUMS"
+          (cd "$download" && sha256sum -c SHA256SUMS)
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            gh attestation verify "$download/$(basename "$ARCHIVE")" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref "refs/tags/${TAG}" \
+              --format json > "$RUNNER_TEMP/attestation.json"
+          else
+            gh attestation verify "$download/$(basename "$ARCHIVE")" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref refs/heads/main \
+              --format json > "$RUNNER_TEMP/attestation.json"
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '[.assets[] | {name, size, digest, download_count}]' | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/attestation.json" >> "$GITHUB_STEP_SUMMARY"
