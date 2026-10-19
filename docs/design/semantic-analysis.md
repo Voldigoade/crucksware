@@ -35,19 +35,19 @@ the metadata check cannot block at open. Path resolution is not an atomic snapsh
 must remain stable during detection, and behavior for a concurrently substituted device
 is not guaranteed.
 
-The current single-file inspection reports the detected kind, metadata size, and a
-text/binary classification based on a bounded read. Its default byte-read limit is
-8,196 bytes, covering the 8 KiB sample and a possible four-byte PE signature outside it.
-ELF and PE are labeled as candidates because these signature checks do not validate their
-full structures. Inspection does not calculate a fingerprint or parse format-specific
-structures. The result is not an atomic filesystem snapshot; inputs should remain stable
-during inspection. A format-specific inspector must validate the full structure and
-reject malformed input cleanly.
+Single-file inspection validates ELF structure and reports header, section, segment,
+interpreter, dependency, import/export, symbol, build ID, GNU stack, and GNU RELRO facts
+where present. ELF files are limited to 64 MiB. Inspection also limits reported entries
+to 100,000 by default, each copied name to 4 KiB, and total copied names to 16 MiB. Names
+remain byte sequences until the report encodes them. Malformed ELF input returns an error
+without a partial report. PE signatures remain candidates and are not parsed yet. Unknown
+files receive only the bounded sample classification. The result is not an atomic
+filesystem snapshot; inputs should remain stable during inspection.
 
 ## Current implementation
 
 The `input` module implements detection and bounded read accounting. The `inspection`
-module builds basic single-file facts, while the existing `compare` and `scan` modules
-continue to handle extracted Linux root filesystem directories. Format parsers, semantic
-comparison, and source-language analysis are future layers and are not implied by
-detection alone.
+module validates supported ELF candidates and builds static facts, while the existing
+`compare` and `scan` modules continue to handle extracted Linux root filesystem
+directories. Binary semantic comparison and source-language analysis remain future
+layers.

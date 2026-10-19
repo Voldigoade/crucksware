@@ -50,16 +50,23 @@ pub enum InputError {
     Changed {
         path: PathBuf,
     },
+    Format {
+        format: &'static str,
+        path: PathBuf,
+        message: String,
+    },
     LimitExceeded {
         resource: &'static str,
         limit: u64,
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct InputDetection {
     pub kind: InputKind,
     pub size_bytes: Option<u64>,
+    pub file: Option<File>,
+    pub sample: Vec<u8>,
 }
 
 impl fmt::Display for InputError {
@@ -84,6 +91,15 @@ impl fmt::Display for InputError {
                 "input changed during inspection at {}",
                 encode_bytes(path.as_os_str().as_encoded_bytes())
             ),
+            Self::Format {
+                format,
+                path,
+                message,
+            } => write!(
+                formatter,
+                "invalid {format} input at {}: {message}",
+                encode_bytes(path.as_os_str().as_encoded_bytes())
+            ),
             Self::LimitExceeded { resource, limit } => {
                 write!(formatter, "{resource} limit exceeded ({limit})")
             }
@@ -95,9 +111,10 @@ impl Error for InputError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::UnsupportedType { .. } | Self::Changed { .. } | Self::LimitExceeded { .. } => {
-                None
-            }
+            Self::UnsupportedType { .. }
+            | Self::Changed { .. }
+            | Self::Format { .. }
+            | Self::LimitExceeded { .. } => None,
         }
     }
 }
@@ -120,6 +137,8 @@ pub(crate) fn detect_input_bounded(
         return Ok(InputDetection {
             kind: InputKind::Directory,
             size_bytes: None,
+            file: None,
+            sample: Vec::new(),
         });
     }
     if !metadata.is_file() {
@@ -152,6 +171,8 @@ pub(crate) fn detect_input_bounded(
         return Ok(InputDetection {
             kind: InputKind::Elf,
             size_bytes: Some(metadata.len()),
+            file: Some(file),
+            sample: sample.to_vec(),
         });
     }
 
@@ -186,6 +207,8 @@ pub(crate) fn detect_input_bounded(
             return Ok(InputDetection {
                 kind: InputKind::Pe,
                 size_bytes: Some(metadata.len()),
+                file: Some(file),
+                sample: sample.to_vec(),
             });
         }
     }
@@ -212,6 +235,8 @@ pub(crate) fn detect_input_bounded(
     Ok(InputDetection {
         kind,
         size_bytes: Some(metadata.len()),
+        file: Some(file),
+        sample: sample.to_vec(),
     })
 }
 
