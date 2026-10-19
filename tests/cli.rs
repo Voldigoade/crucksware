@@ -26,6 +26,12 @@ fn run_compare(old: &std::path::Path, new: &std::path::Path, options: &[&str]) -
     command.output().unwrap()
 }
 
+fn run_inspect(path: &std::path::Path, options: &[&str]) -> Output {
+    let mut command = binary();
+    command.arg("inspect").args(options).arg(path);
+    command.output().unwrap()
+}
+
 #[cfg(target_os = "linux")]
 fn tree_snapshot(root: &std::path::Path) -> BTreeMap<String, (Vec<u8>, u32)> {
     fs::read_dir(root)
@@ -54,6 +60,7 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
     let help_text = String::from_utf8(help.stdout).unwrap();
     assert!(help_text.contains("Usage: crucksware <COMMAND>"));
     assert!(help_text.contains("compare"));
+    assert!(help_text.contains("inspect"));
     assert!(!help_text.contains("Print this message or the help of the given"));
     assert!(!help_text.contains('\u{1b}'));
 
@@ -71,6 +78,12 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
         assert!(compare_help_text.contains(option), "{option}");
     }
     assert!(!compare_help_text.contains('\u{1b}'));
+
+    let inspect_help = binary().args(["inspect", "--help"]).output().unwrap();
+    assert_eq!(inspect_help.status.code(), Some(0));
+    let inspect_help_text = String::from_utf8(inspect_help.stdout).unwrap();
+    assert!(inspect_help_text.contains("--max-bytes-read"));
+    assert!(inspect_help_text.contains("without executing it"));
 
     let version = binary().arg("--version").output().unwrap();
     assert_eq!(version.status.code(), Some(0));
@@ -221,6 +234,89 @@ fn unknown_format_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     assert!(!output.stderr.is_empty());
+}
+
+#[test]
+fn inspect_reports_basic_file_facts_and_keeps_stdout_clean() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("notes.exe");
+    fs::write(&path, b"plain text\n").unwrap();
+
+    let output = run_inspect(&path, &[]);
+    let repeated = run_inspect(&path, &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Detected kind: text"));
+    assert!(stdout.contains("Size: 11 bytes"));
+    assert!(stdout.contains("Content: text"));
+    assert_eq!(output.stdout, repeated.stdout);
+}
+
+#[test]
+fn inspect_reports_format_candidates_without_claiming_semantic_parsing() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("not-validated.exe");
+    fs::write(&path, b"\x7fELF").unwrap();
+
+    let output = run_inspect(&path, &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Detected kind: ELF candidate"));
+    assert!(stdout.contains("Semantic format parsing: not performed"));
+}
+
+#[test]
+fn inspect_errors_emit_no_partial_report_and_limits_are_positive() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("input");
+    fs::write(&path, vec![b'x'; 32]).unwrap();
+
+    let limited = run_inspect(&path, &["--max-bytes-read=4"]);
+    assert_eq!(limited.status.code(), Some(2));
+    assert!(limited.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&limited.stderr).contains("bytes read limit exceeded"));
+
+    let invalid_limit = run_inspect(&path, &["--max-bytes-read=0"]);
+    assert_eq!(invalid_limit.status.code(), Some(2));
+    assert!(invalid_limit.stdout.is_empty());
+    assert!(!invalid_limit.stderr.is_empty());
+
+    let directory = run_inspect(temporary.path(), &[]);
+    assert_eq!(directory.status.code(), Some(2));
+    assert!(directory.stdout.is_empty());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn inspect_preserves_non_utf8_and_option_terminated_paths() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join(OsStr::from_bytes(b"payload-\xff"));
+    fs::write(&path, b"text").unwrap();
+
+    let non_utf8 = run_inspect(&path, &[]);
+    assert_eq!(non_utf8.status.code(), Some(0));
+    assert!(non_utf8.stderr.is_empty());
+    assert!(
+        String::from_utf8(non_utf8.stdout)
+            .unwrap()
+            .contains("Detected kind: text")
+    );
+
+    let dash_path = temporary.path().join("-payload");
+    fs::write(&dash_path, b"dash").unwrap();
+    let terminated = binary()
+        .current_dir(temporary.path())
+        .args(["inspect", "--", "-payload"])
+        .output()
+        .unwrap();
+    assert_eq!(terminated.status.code(), Some(0));
+    assert!(terminated.stderr.is_empty());
 }
 
 #[cfg(target_pointer_width = "32")]

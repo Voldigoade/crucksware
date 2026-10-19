@@ -47,6 +47,10 @@ pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session
         println!("No analysis has been completed in this session.");
         return;
     };
+    if !matches!(last, LastAnalysis::DirectoryComparison { .. }) {
+        eprintln!("crucksware: reports are currently available for directory comparisons");
+        return;
+    }
     let output_path = if output_argument.is_empty() {
         match prompt_report_path(editor) {
             Some(path) => path,
@@ -87,11 +91,14 @@ fn write_report(
     format: ReportFormat,
     editor: &mut DefaultEditor,
 ) -> io::Result<bool> {
-    let roots = last.roots.as_ref().ok_or_else(|| {
-        io::Error::new(
+    let LastAnalysis::DirectoryComparison { diff, roots } = last else {
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "input rootfs paths are unavailable; refusing report export",
-        )
+            "reports are currently available for directory comparisons",
+        ));
+    };
+    let roots = roots.as_ref().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "input paths are unavailable")
     })?;
     let target = ensure_outside_roots(path, roots)?;
     let Some(destination) = open_report_destination(&target, editor)? else {
@@ -99,7 +106,7 @@ fn write_report(
     };
     let replace = matches!(destination, ReportDestination::Replace);
     publish_report(&target, replace, |file| {
-        write_report_contents(last, format, file)
+        write_report_contents(diff, format, file)
     })?;
     Ok(true)
 }
@@ -131,16 +138,16 @@ fn publish_report(
 }
 
 fn write_report_contents(
-    last: &LastAnalysis,
+    diff: &crucksware::model::Diff,
     format: ReportFormat,
     file: &mut File,
 ) -> io::Result<()> {
     let mut output = BufWriter::new(file);
     match format {
-        ReportFormat::Text => report::text::write_text(&last.diff, &mut output)?,
-        ReportFormat::Json => report::json::write_json(&last.diff, &mut output)?,
-        ReportFormat::Markdown => report::markdown::write_markdown(&last.diff, &mut output)?,
-        ReportFormat::Html => report::html::write_html(&last.diff, &mut output)?,
+        ReportFormat::Text => report::text::write_text(diff, &mut output)?,
+        ReportFormat::Json => report::json::write_json(diff, &mut output)?,
+        ReportFormat::Markdown => report::markdown::write_markdown(diff, &mut output)?,
+        ReportFormat::Html => report::html::write_html(diff, &mut output)?,
     }
     output.flush()
 }
