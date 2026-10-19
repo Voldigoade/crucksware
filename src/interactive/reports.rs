@@ -1,12 +1,12 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crucksware::report;
 use rustyline::{DefaultEditor, error::ReadlineError};
+use tempfile::NamedTempFile;
 
 use super::{LastAnalysis, Session};
 
@@ -19,11 +19,9 @@ enum ReportFormat {
 }
 
 enum ReportDestination {
-    New(File),
+    New,
     Replace,
 }
-
-static REPORT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session: &Session) {
     let arguments = arguments.trim_start();
@@ -99,24 +97,44 @@ fn write_report(
     let Some(destination) = open_report_destination(&target, editor)? else {
         return Ok(false);
     };
-    match destination {
-        ReportDestination::New(file) => write_report_contents(last, format, file)?,
-        ReportDestination::Replace => {
-            let (temporary_path, file) = create_temporary_report(&target)?;
-            if let Err(error) = write_report_contents(last, format, file) {
-                let _ = fs::remove_file(&temporary_path);
-                return Err(error);
-            }
-            if let Err(error) = fs::rename(&temporary_path, &target) {
-                let _ = fs::remove_file(&temporary_path);
-                return Err(error);
-            }
-        }
-    }
+    let replace = matches!(destination, ReportDestination::Replace);
+    publish_report(&target, replace, |file| {
+        write_report_contents(last, format, file)
+    })?;
     Ok(true)
 }
 
-fn write_report_contents(last: &LastAnalysis, format: ReportFormat, file: File) -> io::Result<()> {
+fn publish_report(
+    path: &Path,
+    replace: bool,
+    render: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temporary = NamedTempFile::new_in(parent)?;
+    render(temporary.as_file_mut())?;
+    temporary.as_file_mut().flush()?;
+
+    if replace {
+        temporary
+            .persist(path)
+            .map(|_| ())
+            .map_err(|error| error.error)
+    } else {
+        temporary
+            .persist_noclobber(path)
+            .map(|_| ())
+            .map_err(|error| error.error)
+    }
+}
+
+fn write_report_contents(
+    last: &LastAnalysis,
+    format: ReportFormat,
+    file: &mut File,
+) -> io::Result<()> {
     let mut output = BufWriter::new(file);
     match format {
         ReportFormat::Text => report::text::write_text(&last.diff, &mut output)?,
@@ -170,10 +188,8 @@ fn open_report_destination(
     path: &Path,
     editor: &mut DefaultEditor,
 ) -> io::Result<Option<ReportDestination>> {
-    match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(file) => Ok(Some(ReportDestination::New(file))),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
             validate_replace_target(&metadata)?;
             if !confirm_overwrite(editor)? {
                 return Ok(None);
@@ -182,6 +198,7 @@ fn open_report_destination(
             validate_replace_target(&metadata)?;
             Ok(Some(ReportDestination::Replace))
         }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Some(ReportDestination::New)),
         Err(error) => Err(error),
     }
 }
@@ -219,27 +236,6 @@ fn validate_replace_target(metadata: &fs::Metadata) -> io::Result<()> {
     ))
 }
 
-fn create_temporary_report(destination: &Path) -> io::Result<(PathBuf, File)> {
-    let parent = destination
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    for _ in 0..128 {
-        let sequence = REPORT_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = format!(".crucksware-report-{}-{sequence}.tmp", std::process::id());
-        let path = parent.join(name);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok((path, file)),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "could not allocate a temporary report file",
-    ))
-}
-
 fn confirm_overwrite(editor: &mut DefaultEditor) -> io::Result<bool> {
     match editor.readline("Overwrite existing report? [y/N]: ") {
         Ok(answer) => Ok(matches!(
@@ -255,3 +251,6 @@ fn confirm_overwrite(editor: &mut DefaultEditor) -> io::Result<bool> {
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests;
