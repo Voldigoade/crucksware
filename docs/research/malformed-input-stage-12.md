@@ -73,3 +73,21 @@ container does not permit its required ptrace access. The successful retry set
 `ASAN_OPTIONS=detect_leaks=0`; AddressSanitizer remained enabled, but this campaign does
 not provide leak-detection evidence. This bounded run does not prove parser safety or
 replace longer campaigns and testing on other architectures.
+
+## Requalification after parser work bounds
+
+The three targets were rerun on 2026-10-19 against commit `718923cec724c67e149ebed4d835d04acbcbe30a`,
+which includes the bounded Tree-sitter parser and query callbacks. Each run used the
+tracked synthetic corpus copied to `/tmp`, a 60-second campaign, a two-second per-input
+timeout, and AddressSanitizer with leak detection disabled for the container limitation
+described above. No crash, timeout, sanitizer finding, or crash artifact occurred.
+
+| Target | Executions | Average executions/s | New corpus units | Peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| `inspect_file` | 1,743,990 | not recorded | not recorded | 498 MiB |
+| `compare_files` | 853,725 | 13,995 | 1,690 | 465 MiB |
+| `source_analysis` | 4,569 | 74 | 223 | 384 MiB |
+
+The inspection counter came from libFuzzer's final `Done` line. Final statistics were
+enabled for the comparison and source-analysis runs. The runs tested this build and seed
+corpus only; they do not prove parser safety or establish a universal resource bound.
