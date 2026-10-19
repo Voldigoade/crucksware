@@ -5,8 +5,8 @@ Semantic firmware diff and triage in Rust.
 **Experimental and under active development.** Linux comparison of two extracted root
 filesystem directories is implemented, including exact bounded regular-file comparison
 and filesystem metadata. The direct CLI provides deterministic text and JSON schema v1
-reports, plus bounded single-file inspection. ELF inputs receive static structural facts;
-unknown files receive only basic type, size, and text/binary facts.
+reports, plus bounded single-file inspection. ELF and PE inputs receive static structural
+facts; unknown files receive only basic type, size, and text/binary facts.
 The interactive shell adds session summaries and text, JSON, Markdown, and offline HTML
 exports with live progress.
 
@@ -18,15 +18,15 @@ filesystem-managed access times.
 Crucksware is a focused, local tool for firmware analysts, embedded engineers, reverse
 engineers, and defensive security researchers. It does not extract firmware images or
 semantically compare binary formats. Input files are never executed. Direct SquashFS
-input and semantic file classification are not implemented.
+input and source-language analysis are not implemented.
 
 ## Design
 
 The [v0.1 design](docs/design/v0.1.md) defines the comparison and report contract,
 including the [JSON schema](docs/json/schema-1.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
-The [binary analysis design](docs/design/binary-analysis.md) describes current ELF
-inspection and future format support.
+The [binary analysis design](docs/design/binary-analysis.md) describes current ELF and
+PE inspection and future format support.
 
 ```sh
 crucksware compare old-rootfs/ new-rootfs/
@@ -36,10 +36,12 @@ crucksware inspect ./program.bin
 
 The command exits with status 0 when the trees have no differences, 1 when they do,
 and 2 when comparison or output fails. See `crucksware compare --help` for limits.
-`inspect` parses validated ELF structure without executing the input. ELF files are
-limited to 64 MiB by default, with a 100,000-record limit. Unknown files still receive
-only the bounded sample classification. PE signatures are identified as candidates but
-are not parsed yet. Use `crucksware inspect --help` to adjust the byte and record limits.
+`inspect` parses bounded ELF and PE structure without executing the input. Both formats
+are limited to 64 MiB and 100,000 reported records by default. PE output includes
+sections, imports, exports, resource metadata, CodeView PDB identity where present, and
+certificate-table location. It does not verify Authenticode signatures. Unknown files
+receive only a bounded text/binary classification. Use `crucksware inspect --help` to
+adjust byte and record limits.
 
 ## Interactive shell
 

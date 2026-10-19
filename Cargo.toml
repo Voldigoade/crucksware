@@ -22,7 +22,7 @@ tempfile = "3.27.0"
 object = {
     version = "0.40.0",
     default-features = false,
-    features = ["read_core", "std", "elf"],
+    features = ["read_core", "std", "elf", "pe"],
 }
 
 [target.'cfg(target_os = "linux")'.dependencies]

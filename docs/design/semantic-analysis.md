@@ -35,19 +35,22 @@ the metadata check cannot block at open. Path resolution is not an atomic snapsh
 must remain stable during detection, and behavior for a concurrently substituted device
 is not guaranteed.
 
-Single-file inspection validates ELF structure and reports header, section, segment,
-interpreter, dependency, import/export, symbol, build ID, GNU stack, and GNU RELRO facts
-where present. ELF files are limited to 64 MiB. Inspection also limits reported entries
-to 100,000 by default, each copied name to 4 KiB, and total copied names to 16 MiB. Names
-remain byte sequences until the report encodes them. Malformed ELF input returns an error
-without a partial report. PE signatures remain candidates and are not parsed yet. Unknown
-files receive only the bounded sample classification. The result is not an atomic
-filesystem snapshot; inputs should remain stable during inspection.
+Single-file inspection validates ELF and PE structures and reports selected static
+facts. ELF output includes header, section, segment, interpreter, dependency, import,
+export, symbol, build ID, GNU stack, and GNU RELRO metadata where present. PE output
+includes image width, architecture, machine, entry point, subsystem, sections, imports,
+delay imports, exports, resource identifiers and ranges, CodeView PDB identity, and
+certificate-table location where present. Neither format receives a security verdict.
+Both have a 64 MiB file limit, a 100,000-record default, a 4 KiB per-name limit, and a
+16 MiB aggregate copied-name limit. PE resource traversal has a depth limit of 16.
+Malformed ELF or PE input returns an error without a partial report. Unknown files
+receive only the bounded sample classification. The result is not an atomic filesystem
+snapshot; inputs should remain stable during inspection.
 
 ## Current implementation
 
 The `input` module implements detection and bounded read accounting. The `inspection`
-module validates supported ELF candidates and builds static facts, while the existing
-`compare` and `scan` modules continue to handle extracted Linux root filesystem
+module validates supported ELF and PE candidates and builds static facts, while the
+existing `compare` and `scan` modules continue to handle extracted Linux root filesystem
 directories. Binary semantic comparison and source-language analysis remain future
 layers.

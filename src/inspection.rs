@@ -1,16 +1,38 @@
 use std::{
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Seek, SeekFrom},
     path::Path,
 };
 
 use crate::input::{InputDetection, InputError, InputKind, detect_input_bounded};
 
 mod elf;
+mod pe;
 
 pub const MAX_ELF_FILE_BYTES: u64 = 64 * 1024 * 1024;
-pub const DEFAULT_MAX_BYTES_READ: u64 = MAX_ELF_FILE_BYTES + 8 * 1024 + 4;
+pub const MAX_PE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FORMAT_FILE_BYTES: u64 = if MAX_ELF_FILE_BYTES > MAX_PE_FILE_BYTES {
+    MAX_ELF_FILE_BYTES
+} else {
+    MAX_PE_FILE_BYTES
+};
+pub const DEFAULT_MAX_BYTES_READ: u64 = MAX_FORMAT_FILE_BYTES + 8 * 1024 + 4;
 pub const DEFAULT_MAX_ENTRIES: u64 = 100_000;
+
+const ELF_FILE_LIMIT: FormatFileLimit = FormatFileLimit {
+    max_bytes: MAX_ELF_FILE_BYTES,
+    resource: "ELF file size",
+};
+const PE_FILE_LIMIT: FormatFileLimit = FormatFileLimit {
+    max_bytes: MAX_PE_FILE_BYTES,
+    resource: "PE file size",
+};
+
+#[derive(Clone, Copy)]
+struct FormatFileLimit {
+    max_bytes: u64,
+    resource: &'static str,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContentKind {
@@ -84,11 +106,92 @@ pub struct ElfInspection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeSection {
+    pub name: Vec<u8>,
+    pub virtual_address: u32,
+    pub virtual_size: u32,
+    pub raw_offset: u32,
+    pub raw_size: u32,
+    pub characteristics: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeCertificateTable {
+    pub file_offset: u32,
+    pub size: u32,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PeImportName {
+    Name(Vec<u8>),
+    Ordinal(u16),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeImport {
+    pub library: Vec<u8>,
+    pub name: PeImportName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeExport {
+    pub ordinal: u16,
+    pub name: Option<Vec<u8>>,
+    pub target: PeExportTarget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PeExportTarget {
+    Address(u32),
+    ForwardedName { library: Vec<u8>, name: Vec<u8> },
+    ForwardedOrdinal { library: Vec<u8>, ordinal: u16 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum PeResourceId {
+    Name(Vec<u8>),
+    Id(u16),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeResource {
+    pub path: Vec<PeResourceId>,
+    pub data_rva: u32,
+    pub size: u32,
+    pub code_page: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PePdbInfo {
+    pub path: Vec<u8>,
+    pub guid: [u8; 16],
+    pub age: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeInspection {
+    pub format: &'static str,
+    pub architecture: String,
+    pub machine: u16,
+    pub entry_point_rva: u32,
+    pub image_base: u64,
+    pub subsystem: u16,
+    pub sections: Vec<PeSection>,
+    pub imports: Vec<PeImport>,
+    pub delay_imports: Vec<PeImport>,
+    pub exports: Vec<PeExport>,
+    pub resources: Vec<PeResource>,
+    pub pdb_info: Option<PePdbInfo>,
+    pub certificate_table: Option<PeCertificateTable>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileInspection {
     pub kind: InputKind,
     pub size_bytes: u64,
     pub content: ContentKind,
     pub elf: Option<ElfInspection>,
+    pub pe: Option<PeInspection>,
 }
 
 pub fn inspect_file(path: &Path, max_bytes_read: u64) -> Result<FileInspection, InputError> {
@@ -103,8 +206,10 @@ pub fn inspect_file_with_limits(
     let InputDetection {
         kind,
         size_bytes,
+        bytes_read,
         file,
         sample,
+        pe_signature_probe,
     } = detect_input_bounded(path, max_bytes_read)?;
     let Some(size_bytes) = size_bytes else {
         return Err(InputError::UnsupportedType {
@@ -118,20 +223,44 @@ pub fn inspect_file_with_limits(
         }
     };
 
-    let elf = if kind == InputKind::Elf {
-        let file = file.ok_or_else(|| InputError::Changed {
-            path: path.to_path_buf(),
-        })?;
-        Some(inspect_elf_file(
-            file,
-            sample,
-            size_bytes,
-            max_bytes_read,
-            max_entries,
-            path,
-        )?)
-    } else {
-        None
+    let (elf, pe) = match kind {
+        InputKind::Elf => {
+            let file = file.ok_or_else(|| InputError::Changed {
+                path: path.to_path_buf(),
+            })?;
+            let data = read_format_file(
+                FormatFileRead {
+                    file,
+                    sample,
+                    bytes_already_read: bytes_read,
+                    size_bytes,
+                    signature_probe: None,
+                },
+                max_bytes_read,
+                ELF_FILE_LIMIT,
+                path,
+            )?;
+            (Some(elf::inspect(&data, max_entries, path)?), None)
+        }
+        InputKind::Pe => {
+            let file = file.ok_or_else(|| InputError::Changed {
+                path: path.to_path_buf(),
+            })?;
+            let data = read_format_file(
+                FormatFileRead {
+                    file,
+                    sample,
+                    bytes_already_read: bytes_read,
+                    size_bytes,
+                    signature_probe: pe_signature_probe,
+                },
+                max_bytes_read,
+                PE_FILE_LIMIT,
+                path,
+            )?;
+            (None, Some(pe::inspect(&data, max_entries, path)?))
+        }
+        _ => (None, None),
     };
 
     Ok(FileInspection {
@@ -139,27 +268,35 @@ pub fn inspect_file_with_limits(
         size_bytes,
         content,
         elf,
+        pe,
     })
 }
 
-fn inspect_elf_file(
-    mut file: File,
+struct FormatFileRead {
+    file: File,
     sample: Vec<u8>,
+    bytes_already_read: u64,
     size_bytes: u64,
+    signature_probe: Option<crate::input::PeSignatureProbe>,
+}
+
+fn read_format_file(
+    input: FormatFileRead,
     max_bytes_read: u64,
-    max_entries: u64,
+    file_limit: FormatFileLimit,
     path: &Path,
-) -> Result<ElfInspection, InputError> {
-    if size_bytes > MAX_ELF_FILE_BYTES {
+) -> Result<Vec<u8>, InputError> {
+    let FormatFileRead {
+        mut file,
+        sample,
+        bytes_already_read,
+        size_bytes,
+        signature_probe,
+    } = input;
+    if size_bytes > file_limit.max_bytes {
         return Err(InputError::LimitExceeded {
-            resource: "ELF file size",
-            limit: MAX_ELF_FILE_BYTES,
-        });
-    }
-    if size_bytes > max_bytes_read {
-        return Err(InputError::LimitExceeded {
-            resource: "bytes read",
-            limit: max_bytes_read,
+            resource: file_limit.resource,
+            limit: file_limit.max_bytes,
         });
     }
     if sample.len() as u64 > size_bytes {
@@ -167,34 +304,84 @@ fn inspect_elf_file(
             path: path.to_path_buf(),
         });
     }
-    if (sample.len() as u64) < size_bytes.min(8 * 1024) {
+    let sample_len = sample.len() as u64;
+    let probe_end = signature_probe
+        .map(|probe| {
+            probe
+                .offset
+                .checked_add(probe.bytes.len() as u64)
+                .ok_or_else(|| InputError::Changed {
+                    path: path.to_path_buf(),
+                })
+        })
+        .transpose()?;
+    if probe_end.is_some_and(|end| end > size_bytes) {
         return Err(InputError::Changed {
             path: path.to_path_buf(),
         });
     }
+    let probe_bytes_after_sample = signature_probe
+        .zip(probe_end)
+        .map(|(probe, end)| end.saturating_sub(probe.offset.max(sample_len)))
+        .unwrap_or(0);
+    let additional_bytes = size_bytes
+        .checked_sub(sample_len)
+        .and_then(|remaining| remaining.checked_sub(probe_bytes_after_sample))
+        .ok_or_else(|| InputError::Changed {
+            path: path.to_path_buf(),
+        })?;
+    let total_bytes_read =
+        bytes_already_read
+            .checked_add(additional_bytes)
+            .ok_or(InputError::LimitExceeded {
+                resource: "bytes read",
+                limit: max_bytes_read,
+            })?;
+    if total_bytes_read > max_bytes_read {
+        return Err(InputError::LimitExceeded {
+            resource: "bytes read",
+            limit: max_bytes_read,
+        });
+    }
     let data_len = usize::try_from(size_bytes).map_err(|_| InputError::LimitExceeded {
-        resource: "ELF file size",
-        limit: MAX_ELF_FILE_BYTES,
+        resource: file_limit.resource,
+        limit: file_limit.max_bytes,
     })?;
     let mut data = sample;
     let sample_len = data.len();
     data.try_reserve_exact(data_len.saturating_sub(data.len()))
         .map_err(|_| InputError::LimitExceeded {
-            resource: "ELF memory",
-            limit: MAX_ELF_FILE_BYTES,
+            resource: "input memory",
+            limit: file_limit.max_bytes,
         })?;
     data.resize(data_len, 0);
-    if let Err(source) = file.read_exact(&mut data[sample_len..]) {
-        if source.kind() == io::ErrorKind::UnexpectedEof {
+    if let Some(probe) = signature_probe {
+        let start = usize::try_from(probe.offset).map_err(|_| InputError::Changed {
+            path: path.to_path_buf(),
+        })?;
+        let end = start
+            .checked_add(probe.bytes.len())
+            .ok_or_else(|| InputError::Changed {
+                path: path.to_path_buf(),
+            })?;
+        if end > data.len() {
             return Err(InputError::Changed {
                 path: path.to_path_buf(),
             });
         }
-        return Err(InputError::Io {
-            operation: "read input",
-            path: path.to_path_buf(),
-            source,
-        });
+        let copy_end = end.max(sample_len);
+        read_file_range(
+            &mut file,
+            &mut data,
+            sample_len..start.max(sample_len),
+            path,
+        )?;
+        data[start..end].copy_from_slice(&probe.bytes);
+        let data_len = data.len();
+        read_file_range(&mut file, &mut data, copy_end..data_len, path)?;
+    } else {
+        let data_len = data.len();
+        read_file_range(&mut file, &mut data, sample_len..data_len, path)?;
     }
 
     let metadata = file.metadata().map_err(|source| InputError::Io {
@@ -208,5 +395,35 @@ fn inspect_elf_file(
         });
     }
 
-    elf::inspect(&data, max_entries, path)
+    Ok(data)
+}
+
+fn read_file_range(
+    file: &mut File,
+    data: &mut [u8],
+    range: std::ops::Range<usize>,
+    path: &Path,
+) -> Result<(), InputError> {
+    if range.is_empty() {
+        return Ok(());
+    }
+    file.seek(SeekFrom::Start(range.start as u64))
+        .map_err(|source| InputError::Io {
+            operation: "read input",
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if let Err(source) = file.read_exact(&mut data[range]) {
+        if source.kind() == io::ErrorKind::UnexpectedEof {
+            return Err(InputError::Changed {
+                path: path.to_path_buf(),
+            });
+        }
+        return Err(InputError::Io {
+            operation: "read input",
+            path: path.to_path_buf(),
+            source,
+        });
+    }
+    Ok(())
 }

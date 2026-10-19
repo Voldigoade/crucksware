@@ -1,7 +1,7 @@
 # Binary Analysis Design
 
-This document records current and planned binary-analysis behavior. ELF inspection is
-implemented for a bounded set of structural facts. PE and AppImage inspection and all
+This document records current and planned binary-analysis behavior. Bounded ELF and PE
+inspection are implemented for selected structural facts. AppImage inspection and all
 binary semantic comparison remain future work. Inputs remain read-only and are never
 executed, loaded by the operating-system loader, or mounted.
 
@@ -64,17 +64,20 @@ secure. Do not infer loader behavior or dependency resolution from static fields
 
 ## PE
 
-For Windows PE executables, including `.exe` files, report machine and image width,
-sections and their recorded flags, entry point, subsystem, imports, delay-load imports,
-exports, and resource identifiers and sizes where they can be parsed within limits.
-Microsoft’s PE format uses a resource directory tree and treats the Certificate Table
-address as a file offset rather than an RVA.
-[PE/COFF specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)
+Current inspection uses `object` 0.40.0's PE reader. It reports PE32/PE32+ width,
+architecture, machine value, entry point RVA, image base, subsystem, section ranges and
+characteristics, ordinary and delay-load imports, exports and targets, resource
+identifiers and data ranges, and CodeView PDB path/GUID/age when present. Names are
+escaped in text output. Resource data is not extracted or executed. A resource tree is
+limited to depth 16 and shares the 100,000-entry and copied-name budgets.
 
-Certificate-table presence and parseable signer metadata may be reported as file facts.
-They do not establish signature validity, trusted identity, or policy acceptance.
-Authenticode verification and trust-chain evaluation are outside this design. Do not
-read resources or metadata beyond configured byte, entry, and nesting limits.
+The Certificate Table directory is interpreted as a file offset and its byte range is
+checked. Crucksware reports its location and size only. It does not parse certificates,
+verify Authenticode signatures, or assess trusted identity or policy acceptance. Debug
+output is limited to CodeView PDB identity; other debug records are not summarized.
+PE files are limited to 64 MiB by default. Each copied name is limited to 4 KiB and the
+aggregate copied-name budget is 16 MiB. Parser limits reduce exposure but do not prove
+robustness against hostile metadata; malformed-input and fuzz testing remain required.
 
 ## AppImage
 
@@ -105,15 +108,14 @@ and limits.
 
 ## Parser choice and input limits
 
-The selected parser is [`object`](https://docs.rs/object/0.40.0/object/), with only its
-read-core, standard-library, and ELF features enabled. Its unified read API exposes
-sections, symbols, imports, exports, and entry-point facts, while its ELF-specific API
-provides program headers and interpreter data. The crate is dual-licensed MIT or
-Apache-2.0. Its project has an [open discussion about exhaustive validation and bounded
-work](https://github.com/gimli-rs/object/issues/874). Crucksware applies file, entry,
-field, and copied-name limits, but parser work is not fully bounded by those checks.
-That limitation requires malformed-input and fuzz testing before making stronger
-robustness claims.
+The selected parser is [`object`](https://docs.rs/object/0.40.0/object/), with read-core,
+standard-library, ELF, PE, and the PE-required COFF features enabled. Its unified read
+API supports the selected structural facts across both formats. The crate is
+dual-licensed MIT or Apache-2.0. Its project has an [open discussion about exhaustive
+validation and bounded work](https://github.com/gimli-rs/object/issues/874). Crucksware
+applies file, entry, depth, field, and copied-name limits, but parser work is not fully
+bounded by those checks. That limitation requires malformed-input and fuzz testing
+before making stronger robustness claims.
 
 [`goblin`](https://docs.rs/goblin/0.10.7/goblin/) is an alternative with
 format-specific ELF and PE APIs; its PE API includes resources and certificate-table
