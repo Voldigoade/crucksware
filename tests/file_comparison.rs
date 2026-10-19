@@ -1,8 +1,10 @@
 use std::fs;
 
 use crucksware::{
-    binary_compare::{SemanticComparisonStatus, compare_files},
+    binary_compare::{SemanticComparisonStatus, compare_files, compare_files_with_progress},
     input::InputKind,
+    inspection::{DEFAULT_MAX_BYTES_READ, DEFAULT_MAX_ENTRIES, inspect_file_with_progress},
+    progress::{ProgressEvent, ProgressPhase},
 };
 
 mod common;
@@ -38,6 +40,119 @@ fn identical_files_consume_one_shared_read_budget_exactly() {
     let comparison = compare_files(&old, &new, 16, 100).unwrap();
 
     assert!(!comparison.bytes_changed);
+}
+
+#[test]
+fn file_comparison_progress_reports_real_bytes_in_bounded_batches() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old.bin");
+    let new = temporary.path().join("new.bin");
+    let mut data = vec![b'x'; 256 * 1024];
+    data[0] = 0;
+    fs::write(&old, &data).unwrap();
+    fs::write(&new, &data).unwrap();
+    let mut events = Vec::new();
+
+    let comparison =
+        compare_files_with_progress(&old, &new, 600_000, 100, |event| events.push(event)).unwrap();
+
+    assert!(!comparison.bytes_changed);
+    assert_eq!(comparison.bytes_read, (data.len() * 2 + 2 * 8_192) as u64);
+    let reported_bytes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ProgressEvent::BytesRead { total_bytes_read } => Some(*total_bytes_read),
+            _ => None,
+        })
+        .collect();
+    assert!(reported_bytes.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(reported_bytes.last(), Some(&comparison.bytes_read));
+    assert_eq!(
+        events.first(),
+        Some(&ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::FileComparison,
+            total: None,
+        })
+    );
+    assert_eq!(
+        events.last(),
+        Some(&ProgressEvent::PhaseCompleted {
+            phase: ProgressPhase::FileComparison,
+        })
+    );
+}
+
+#[test]
+fn file_comparison_progress_byte_count_is_cumulative_across_inputs() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old-elf");
+    let new = temporary.path().join("new-text");
+    let mut old_contents = common::minimal_elf64(0x401000);
+    old_contents.resize(256 * 1024, 0);
+    fs::write(&old, old_contents).unwrap();
+    fs::write(&new, b"short text input").unwrap();
+    let mut events = Vec::new();
+
+    let comparison = compare_files_with_progress(
+        &old,
+        &new,
+        DEFAULT_MAX_BYTES_READ,
+        DEFAULT_MAX_ENTRIES,
+        |event| events.push(event),
+    )
+    .unwrap();
+
+    let reported_bytes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ProgressEvent::BytesRead { total_bytes_read } => Some(*total_bytes_read),
+            _ => None,
+        })
+        .collect();
+    assert!(reported_bytes.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(reported_bytes.last(), Some(&comparison.bytes_read));
+}
+
+#[test]
+fn inspection_progress_reports_actual_bytes_while_reading_a_known_format() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("large-elf");
+    let mut contents = common::minimal_elf64(0x401000);
+    contents.resize(256 * 1024, 0);
+    fs::write(&path, contents).unwrap();
+    let mut events = Vec::new();
+
+    let inspection = inspect_file_with_progress(
+        &path,
+        DEFAULT_MAX_BYTES_READ,
+        DEFAULT_MAX_ENTRIES,
+        |event| events.push(event),
+    )
+    .unwrap();
+
+    let reported_bytes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ProgressEvent::BytesRead { total_bytes_read } => Some(*total_bytes_read),
+            _ => None,
+        })
+        .collect();
+    assert!(reported_bytes.len() > 3);
+    assert!(reported_bytes.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(reported_bytes.last(), Some(&inspection.bytes_read));
+    assert_eq!(
+        events.first(),
+        Some(&ProgressEvent::PhaseStarted {
+            phase: ProgressPhase::Inspection,
+            total: None,
+        })
+    );
+    assert_eq!(
+        events.last(),
+        Some(&ProgressEvent::PhaseCompleted {
+            phase: ProgressPhase::Inspection,
+        })
+    );
 }
 
 #[test]

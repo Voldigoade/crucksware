@@ -76,7 +76,7 @@ fn anal_prompts_for_paths_with_spaces_and_reports_the_real_comparison() {
     std::fs::write(old.join("config file"), b"before").expect("old file is written");
     std::fs::write(new.join("config file"), b"after!").expect("new file is written");
 
-    let input = format!("anal\n2\n{}\n{}\nexit\n", old.display(), new.display());
+    let input = format!("anal\n3\n1\n{}\n{}\nexit\n", old.display(), new.display());
     let output = run_shell(input.as_bytes());
 
     assert!(output.status.success());
@@ -113,6 +113,68 @@ fn anal_can_inspect_one_input_and_last_shows_the_latest_inspection() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn anal_compares_two_files_and_last_shows_byte_and_semantic_summary() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old executable");
+    let new = temporary.path().join("new executable");
+    std::fs::write(&old, b"old bytes").expect("old file is written");
+    std::fs::write(&new, b"new bytes").expect("new file is written");
+
+    let input = format!(
+        "anal\n2\n{}\n{}\nlast\nexit\n",
+        old.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("File comparison complete."));
+    assert!(stdout.contains("Byte-level changed: yes"));
+    assert!(stdout.contains("Last file comparison."));
+    assert!(stdout.contains("Semantic status: unsupported"));
+    assert!(output.stderr.is_empty());
+    assert_eq!(std::fs::read(old).unwrap(), b"old bytes");
+    assert_eq!(std::fs::read(new).unwrap(), b"new bytes");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn anal_can_select_source_aware_directory_comparison() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old project");
+    let new = temporary.path().join("new project");
+    std::fs::create_dir(&old).expect("old project is created");
+    std::fs::create_dir(&new).expect("new project is created");
+    std::fs::write(old.join("main.rs"), "fn before() {}\n").expect("old source is written");
+    std::fs::write(new.join("main.rs"), "fn after() {}\n").expect("new source is written");
+
+    let input = format!(
+        "anal\n3\n2\n{}\n{}\nlast\nexit\n",
+        old.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Source-aware analysis complete."));
+    assert!(stdout.contains("Source files analyzed: 1"));
+    assert!(stdout.contains("Binary files analyzed: 0"));
+    assert!(stdout.contains("Last source-aware analysis."));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        std::fs::read(old.join("main.rs")).unwrap(),
+        b"fn before() {}\n"
+    );
+    assert_eq!(
+        std::fs::read(new.join("main.rs")).unwrap(),
+        b"fn after() {}\n"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn analyze_is_an_alias_for_anal() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old");
@@ -120,7 +182,11 @@ fn analyze_is_an_alias_for_anal() {
     std::fs::create_dir(&old).expect("old rootfs is created");
     std::fs::create_dir(&new).expect("new rootfs is created");
 
-    let input = format!("analyze\n2\n{}\n{}\nexit\n", old.display(), new.display());
+    let input = format!(
+        "analyze\n3\n1\n{}\n{}\nexit\n",
+        old.display(),
+        new.display()
+    );
     let output = run_shell(input.as_bytes());
 
     assert!(output.status.success());
@@ -156,7 +222,7 @@ fn analysis_summary_counts_every_change_category_and_unchanged_entry() {
     std::fs::write(old.join("same"), b"unchanged").expect("old unchanged file is written");
     std::fs::write(new.join("same"), b"unchanged").expect("new unchanged file is written");
 
-    let input = format!("anal\n2\n{}\n{}\nexit\n", old.display(), new.display());
+    let input = format!("anal\n3\n1\n{}\n{}\nexit\n", old.display(), new.display());
     let output = run_shell(input.as_bytes());
 
     assert!(output.status.success());
@@ -193,7 +259,7 @@ fn last_shows_the_most_recent_successful_analysis() {
     std::fs::write(new.join("added"), b"new").expect("new file is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nlast\nexit\n",
+        "anal\n3\n1\n{}\n{}\nlast\nexit\n",
         old.display(),
         new.display()
     );
@@ -221,7 +287,7 @@ fn report_exports_text_and_json_to_paths_with_spaces() {
     let json_path = temporary.path().join("json report.json");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nreport json {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nreport json {}\nexit\n",
         old.display(),
         new.display(),
         text_path.display(),
@@ -256,7 +322,7 @@ fn report_exports_markdown_with_safe_paths_and_summary() {
     std::fs::write(&input_file, b"new").expect("new file is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport markdown {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport markdown {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -286,7 +352,7 @@ fn report_exports_self_contained_html() {
     std::fs::write(&input_file, b"new").expect("new file is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport html {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport html {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -317,7 +383,7 @@ fn report_preserves_leading_and_trailing_spaces_in_output_names() {
     std::fs::write(new.join("added"), b"new").expect("new file is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -345,7 +411,7 @@ fn report_prompts_for_a_path_when_one_is_not_supplied() {
     std::fs::write(new.join("added"), b"new").expect("new file is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text\n{}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text\n{}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -374,7 +440,7 @@ fn report_requires_confirmation_before_overwriting_an_existing_file() {
     std::fs::write(&report_path, b"keep this report").expect("existing report is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nn\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nn\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -399,7 +465,7 @@ fn report_rejects_a_directory_destination_without_changing_it() {
     std::fs::create_dir(&destination).expect("report destination directory is created");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nexit\n",
         old.display(),
         new.display(),
         destination.display()
@@ -427,7 +493,7 @@ fn report_overwrites_an_existing_file_after_explicit_confirmation() {
     std::fs::write(&report_path, b"replace this report").expect("existing report is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nyes\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nyes\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -455,7 +521,7 @@ fn report_refuses_to_write_inside_a_compared_rootfs() {
     let report_path = old.join("report.txt");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -481,7 +547,7 @@ fn report_refuses_a_symlinked_parent_that_resolves_inside_a_compared_rootfs() {
     let report_path = alias.join("report.txt");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -507,7 +573,7 @@ fn report_refuses_to_replace_a_hard_linked_rootfs_file() {
     std::fs::hard_link(&source_file, &report_path).expect("report path is hard linked");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -543,7 +609,7 @@ fn report_refuses_symlink_destinations_without_modifying_the_target() {
     std::os::unix::fs::symlink(&source_file, &report_path).expect("report link is created");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nreport text {}\nexit\n",
+        "anal\n3\n1\n{}\n{}\nreport text {}\nexit\n",
         old.display(),
         new.display(),
         report_path.display()
@@ -576,7 +642,7 @@ fn failed_analysis_does_not_replace_the_last_successful_result() {
     std::fs::write(new.join("added"), b"new").expect("new file is written");
 
     let input = format!(
-        "anal\n2\n{}\n{}\nanal\n2\n{}\n{}\nlast\nexit\n",
+        "anal\n3\n1\n{}\n{}\nanal\n3\n1\n{}\n{}\nlast\nexit\n",
         old.display(),
         new.display(),
         missing.display(),

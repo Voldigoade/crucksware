@@ -52,16 +52,32 @@ pub(crate) fn analyze_binary_changes(
     source_changes: &[crate::source::SourceFileChange],
     budget: &mut crate::limits::Budget,
     max_entries: u64,
+    progress: &mut Option<impl FnMut(crate::progress::ProgressEvent)>,
 ) -> Result<Vec<BinaryFileChange>, crate::error::DiffError> {
     use crate::{
         binary_compare::compare_inspections,
         error::{DiffError, Resource, Side},
         inspection::FileInspection,
-        model::{Category, ChangedField, Entry},
+        model::Entry,
+        progress::{ProgressEvent, ProgressPhase, emit},
         scan::{absolute_path, changed, io_error, stamp, verify_stamp},
     };
     use std::{fs::OpenOptions, io, os::unix::fs::OpenOptionsExt, path::Path};
 
+    let report_progress = progress.is_some();
+    let phase = ProgressPhase::BinaryAnalysis;
+    if report_progress {
+        emit(progress, ProgressEvent::PhaseStarted { phase, total: None });
+    }
+    let total = if report_progress {
+        binary_analysis_candidate_count(diff, old, new, source_changes)?
+    } else {
+        0
+    };
+    if report_progress {
+        emit(progress, ProgressEvent::PhaseTotalKnown { phase, total });
+    }
+    let mut completed = 0_u64;
     let mut semantic_entries = 0_u64;
     let mut changes = Vec::new();
     let mut source_index = 0;
@@ -72,24 +88,15 @@ pub(crate) fn analyze_binary_changes(
         {
             source_index += 1;
         }
+        let old_entry = old.entries.get(&change.path);
+        let new_entry = new.entries.get(&change.path);
+        if !crate::source::is_changed_regular_file(change, old_entry, new_entry) {
+            continue;
+        }
         if source_changes.get(source_index).is_some_and(|source| {
             source.path == change.path
                 && source.analysis_status == crate::source::SourceAnalysisStatus::Compared
         }) {
-            continue;
-        }
-        if change.category == Category::MetadataChanged
-            || (change.category == Category::Modified
-                && !change.changed_fields.contains(&ChangedField::Content))
-        {
-            continue;
-        }
-
-        let old_entry = old.entries.get(&change.path);
-        let new_entry = new.entries.get(&change.path);
-        if old_entry.is_some_and(|entry| !matches!(&entry.entry, Entry::File { .. }))
-            || new_entry.is_some_and(|entry| !matches!(&entry.entry, Entry::File { .. }))
-        {
             continue;
         }
 
@@ -127,42 +134,63 @@ pub(crate) fn analyze_binary_changes(
 
         let old_kind = old_inspection.as_ref().map(|inspection| inspection.kind);
         let new_kind = new_inspection.as_ref().map(|inspection| inspection.kind);
-        if old_kind.is_none_or(|kind| kind == InputKind::Text)
-            && new_kind.is_none_or(|kind| kind == InputKind::Text)
+        if !old_kind.is_none_or(|kind| kind == InputKind::Text)
+            || !new_kind.is_none_or(|kind| kind == InputKind::Text)
         {
-            continue;
+            let (semantic_status, semantic_changes) = match (&old_inspection, &new_inspection) {
+                (Some(old), Some(new)) => {
+                    let comparison = compare_inspections(old, new, true);
+                    let status = match comparison.semantic_status {
+                        SemanticComparisonStatus::Compared => BinaryAnalysisStatus::Compared,
+                        SemanticComparisonStatus::FormatMismatch => {
+                            BinaryAnalysisStatus::FormatMismatch
+                        }
+                        SemanticComparisonStatus::Unsupported => BinaryAnalysisStatus::Unsupported,
+                    };
+                    (status, comparison.semantic_changes)
+                }
+                _ => (BinaryAnalysisStatus::SingleInput, Vec::new()),
+            };
+
+            changes.push(BinaryFileChange {
+                path: change.path.clone(),
+                old_kind,
+                new_kind,
+                old_size_bytes: old_inspection
+                    .as_ref()
+                    .map(|inspection| inspection.size_bytes),
+                new_size_bytes: new_inspection
+                    .as_ref()
+                    .map(|inspection| inspection.size_bytes),
+                byte_level_changed: (old_inspection.is_some() && new_inspection.is_some())
+                    .then_some(true),
+                semantic_status,
+                semantic_changes,
+            });
         }
-
-        let (semantic_status, semantic_changes) = match (&old_inspection, &new_inspection) {
-            (Some(old), Some(new)) => {
-                let comparison = compare_inspections(old, new, true);
-                let status = match comparison.semantic_status {
-                    SemanticComparisonStatus::Compared => BinaryAnalysisStatus::Compared,
-                    SemanticComparisonStatus::FormatMismatch => {
-                        BinaryAnalysisStatus::FormatMismatch
-                    }
-                    SemanticComparisonStatus::Unsupported => BinaryAnalysisStatus::Unsupported,
-                };
-                (status, comparison.semantic_changes)
-            }
-            _ => (BinaryAnalysisStatus::SingleInput, Vec::new()),
-        };
-
-        changes.push(BinaryFileChange {
-            path: change.path.clone(),
-            old_kind,
-            new_kind,
-            old_size_bytes: old_inspection
-                .as_ref()
-                .map(|inspection| inspection.size_bytes),
-            new_size_bytes: new_inspection
-                .as_ref()
-                .map(|inspection| inspection.size_bytes),
-            byte_level_changed: (old_inspection.is_some() && new_inspection.is_some())
-                .then_some(true),
-            semantic_status,
-            semantic_changes,
-        });
+        if report_progress {
+            completed = completed.checked_add(1).ok_or(DiffError::LimitExceeded {
+                resource: Resource::Entries,
+                limit: total,
+            })?;
+            emit(
+                progress,
+                ProgressEvent::BytesRead {
+                    total_bytes_read: budget.bytes_read(),
+                },
+            );
+            emit(
+                progress,
+                ProgressEvent::PhaseProgress {
+                    phase,
+                    completed,
+                    total,
+                },
+            );
+        }
+    }
+    if report_progress {
+        emit(progress, ProgressEvent::PhaseCompleted { phase });
     }
     fn inspect_side(
         root: &Path,
@@ -224,4 +252,41 @@ pub(crate) fn analyze_binary_changes(
     }
 
     Ok(changes)
+}
+
+#[cfg(target_os = "linux")]
+fn binary_analysis_candidate_count(
+    diff: &Diff,
+    old: &crate::model::Snapshot,
+    new: &crate::model::Snapshot,
+    source_changes: &[crate::source::SourceFileChange],
+) -> Result<u64, crate::error::DiffError> {
+    use crate::{
+        error::{DiffError, Resource},
+        source::SourceAnalysisStatus,
+    };
+
+    let mut source_index = 0;
+    diff.changes.iter().try_fold(0_u64, |count, change| {
+        while source_changes
+            .get(source_index)
+            .is_some_and(|source| source.path < change.path)
+        {
+            source_index += 1;
+        }
+        let old_entry = old.entries.get(&change.path);
+        let new_entry = new.entries.get(&change.path);
+        let compared_as_text = source_changes.get(source_index).is_some_and(|source| {
+            source.path == change.path && source.analysis_status == SourceAnalysisStatus::Compared
+        });
+        if crate::source::is_changed_regular_file(change, old_entry, new_entry) && !compared_as_text
+        {
+            count.checked_add(1).ok_or(DiffError::LimitExceeded {
+                resource: Resource::Entries,
+                limit: u64::MAX,
+            })
+        } else {
+            Ok(count)
+        }
+    })
 }

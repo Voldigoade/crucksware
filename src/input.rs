@@ -10,6 +10,7 @@ use std::{
 use std::time::SystemTime;
 
 use crate::path::encode_bytes;
+use crate::progress::{ProgressEvent, emit};
 
 const SAMPLE_SIZE: usize = 8_192;
 const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
@@ -198,6 +199,17 @@ pub(crate) fn detect_input_bounded(
     path: &Path,
     max_bytes_read: u64,
 ) -> Result<InputDetection, InputError> {
+    detect_input_bounded_with_progress(path, max_bytes_read, &mut None::<fn(ProgressEvent)>)
+}
+
+pub(crate) fn detect_input_bounded_with_progress<F>(
+    path: &Path,
+    max_bytes_read: u64,
+    progress: &mut Option<F>,
+) -> Result<InputDetection, InputError>
+where
+    F: FnMut(ProgressEvent),
+{
     let metadata = fs::metadata(path).map_err(|source| input_io("inspect input", path, source))?;
     if metadata.is_dir() {
         return Ok(InputDetection {
@@ -218,7 +230,7 @@ pub(crate) fn detect_input_bounded(
 
     let expected_stamp = InputStamp::from_metadata(&metadata);
     let file = open_input_file(path).map_err(|source| input_io("open input", path, source))?;
-    detect_open_file_bounded_from_stamp(path, file, max_bytes_read, Some(&expected_stamp))
+    detect_open_file_bounded_from_stamp(path, file, max_bytes_read, Some(&expected_stamp), progress)
 }
 
 pub(crate) fn detect_open_file_bounded(
@@ -226,15 +238,25 @@ pub(crate) fn detect_open_file_bounded(
     file: File,
     max_bytes_read: u64,
 ) -> Result<InputDetection, InputError> {
-    detect_open_file_bounded_from_stamp(path, file, max_bytes_read, None)
+    detect_open_file_bounded_from_stamp(
+        path,
+        file,
+        max_bytes_read,
+        None,
+        &mut None::<fn(ProgressEvent)>,
+    )
 }
 
-fn detect_open_file_bounded_from_stamp(
+fn detect_open_file_bounded_from_stamp<F>(
     path: &Path,
     mut file: File,
     max_bytes_read: u64,
     expected_stamp: Option<&InputStamp>,
-) -> Result<InputDetection, InputError> {
+    progress: &mut Option<F>,
+) -> Result<InputDetection, InputError>
+where
+    F: FnMut(ProgressEvent),
+{
     let opened_metadata = file
         .metadata()
         .map_err(|source| input_io("inspect open input", path, source))?;
@@ -265,6 +287,12 @@ fn detect_open_file_bounded_from_stamp(
     let mut sample = [0; SAMPLE_SIZE];
     let sample_len = read_sample(&mut file, &mut sample[..sample_capacity])
         .map_err(|source| input_io("read input", path, source))?;
+    emit(
+        progress,
+        ProgressEvent::BytesRead {
+            total_bytes_read: sample_len as u64,
+        },
+    );
     let sample = &sample[..sample_len];
 
     if sample.starts_with(ELF_MAGIC) {
@@ -306,6 +334,12 @@ fn detect_open_file_bounded_from_stamp(
             let mut signature = [0; PE_SIGNATURE.len()];
             file.read_exact(&mut signature)
                 .map_err(|source| input_io("read PE signature", path, source))?;
+            emit(
+                progress,
+                ProgressEvent::BytesRead {
+                    total_bytes_read: bytes_read,
+                },
+            );
             (signature == *PE_SIGNATURE, Some(signature))
         };
         if signature {
@@ -484,8 +518,14 @@ mod tests {
         fs::rename(replacement, &path).unwrap();
         let file = open_input_file(&path).unwrap();
 
-        let error = detect_open_file_bounded_from_stamp(&path, file, u64::MAX, Some(&expected))
-            .unwrap_err();
+        let error = detect_open_file_bounded_from_stamp(
+            &path,
+            file,
+            u64::MAX,
+            Some(&expected),
+            &mut None::<fn(ProgressEvent)>,
+        )
+        .unwrap_err();
 
         assert!(matches!(error, InputError::Changed { .. }));
     }

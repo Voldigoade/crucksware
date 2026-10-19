@@ -5,9 +5,10 @@ use std::{
 };
 
 use crate::input::{
-    InputDetection, InputError, InputKind, InputStamp, detect_input_bounded,
+    InputDetection, InputError, InputKind, InputStamp, detect_input_bounded_with_progress,
     detect_open_file_bounded, revalidate_input_file,
 };
+use crate::progress::{ProgressEvent, ProgressPhase, emit};
 
 mod elf;
 mod pe;
@@ -211,8 +212,35 @@ pub fn inspect_file_with_limits(
     max_bytes_read: u64,
     max_entries: u64,
 ) -> Result<FileInspection, InputError> {
-    let detection = detect_input_bounded(path, max_bytes_read)?;
-    inspect_detection(path, detection, max_bytes_read, max_entries)
+    inspect_file_inner(
+        path,
+        max_bytes_read,
+        max_entries,
+        &mut None::<fn(ProgressEvent)>,
+    )
+}
+
+pub fn inspect_file_with_progress(
+    path: &Path,
+    max_bytes_read: u64,
+    max_entries: u64,
+    progress: impl FnMut(ProgressEvent),
+) -> Result<FileInspection, InputError> {
+    let mut progress = Some(progress);
+    let phase = ProgressPhase::Inspection;
+    emit(
+        &mut progress,
+        ProgressEvent::PhaseStarted { phase, total: None },
+    );
+    let inspection = inspect_file_inner(path, max_bytes_read, max_entries, &mut progress)?;
+    emit(
+        &mut progress,
+        ProgressEvent::BytesRead {
+            total_bytes_read: inspection.bytes_read,
+        },
+    );
+    emit(&mut progress, ProgressEvent::PhaseCompleted { phase });
+    Ok(inspection)
 }
 
 pub(crate) fn inspect_open_file_with_limits(
@@ -222,15 +250,38 @@ pub(crate) fn inspect_open_file_with_limits(
     max_entries: u64,
 ) -> Result<FileInspection, InputError> {
     let detection = detect_open_file_bounded(path, file, max_bytes_read)?;
-    inspect_detection(path, detection, max_bytes_read, max_entries)
+    inspect_detection(
+        path,
+        detection,
+        max_bytes_read,
+        max_entries,
+        &mut None::<fn(ProgressEvent)>,
+    )
 }
 
-fn inspect_detection(
+pub(crate) fn inspect_file_inner<F>(
+    path: &Path,
+    max_bytes_read: u64,
+    max_entries: u64,
+    progress: &mut Option<F>,
+) -> Result<FileInspection, InputError>
+where
+    F: FnMut(ProgressEvent),
+{
+    let detection = detect_input_bounded_with_progress(path, max_bytes_read, progress)?;
+    inspect_detection(path, detection, max_bytes_read, max_entries, progress)
+}
+
+fn inspect_detection<F>(
     path: &Path,
     detection: InputDetection,
     max_bytes_read: u64,
     max_entries: u64,
-) -> Result<FileInspection, InputError> {
+    progress: &mut Option<F>,
+) -> Result<FileInspection, InputError>
+where
+    F: FnMut(ProgressEvent),
+{
     let InputDetection {
         kind,
         size_bytes,
@@ -274,6 +325,7 @@ fn inspect_detection(
                 max_bytes_read,
                 ELF_FILE_LIMIT,
                 path,
+                progress,
             )?;
             (
                 Some(elf::inspect(&read.data, max_entries, path)?),
@@ -297,6 +349,7 @@ fn inspect_detection(
                 max_bytes_read,
                 PE_FILE_LIMIT,
                 path,
+                progress,
             )?;
             (
                 None,
@@ -347,12 +400,23 @@ struct FormatFileContent {
     bytes_read: u64,
 }
 
-fn read_format_file(
+struct ProgressRead<'a, F> {
+    events: &'a mut Option<F>,
+    bytes_already_read: u64,
+    max_bytes_read: u64,
+    additional_bytes_read: &'a mut u64,
+}
+
+fn read_format_file<F>(
     input: FormatFileRead,
     max_bytes_read: u64,
     file_limit: FormatFileLimit,
     path: &Path,
-) -> Result<FormatFileContent, InputError> {
+    progress: &mut Option<F>,
+) -> Result<FormatFileContent, InputError>
+where
+    F: FnMut(ProgressEvent),
+{
     let FormatFileRead {
         mut file,
         sample,
@@ -423,6 +487,13 @@ fn read_format_file(
             limit: file_limit.max_bytes,
         })?;
     data.resize(data_len, 0);
+    let mut additional_bytes_read = 0_u64;
+    let mut progress_read = ProgressRead {
+        events: progress,
+        bytes_already_read,
+        max_bytes_read,
+        additional_bytes_read: &mut additional_bytes_read,
+    };
     if let Some(probe) = signature_probe {
         let start = usize::try_from(probe.offset).map_err(|_| InputError::Changed {
             path: path.to_path_buf(),
@@ -443,13 +514,26 @@ fn read_format_file(
             &mut data,
             sample_len..start.max(sample_len),
             path,
+            &mut progress_read,
         )?;
         data[start..end].copy_from_slice(&probe.bytes);
         let data_len = data.len();
-        read_file_range(&mut file, &mut data, copy_end..data_len, path)?;
+        read_file_range(
+            &mut file,
+            &mut data,
+            copy_end..data_len,
+            path,
+            &mut progress_read,
+        )?;
     } else {
         let data_len = data.len();
-        read_file_range(&mut file, &mut data, sample_len..data_len, path)?;
+        read_file_range(
+            &mut file,
+            &mut data,
+            sample_len..data_len,
+            path,
+            &mut progress_read,
+        )?;
     }
 
     revalidate_input_file(&file, path, &stamp)?;
@@ -460,12 +544,16 @@ fn read_format_file(
     })
 }
 
-fn read_file_range(
+fn read_file_range<F>(
     file: &mut File,
     data: &mut [u8],
-    range: std::ops::Range<usize>,
+    mut range: std::ops::Range<usize>,
     path: &Path,
-) -> Result<(), InputError> {
+    progress: &mut ProgressRead<'_, F>,
+) -> Result<(), InputError>
+where
+    F: FnMut(ProgressEvent),
+{
     if range.is_empty() {
         return Ok(());
     }
@@ -475,7 +563,42 @@ fn read_file_range(
             path: path.to_path_buf(),
             source,
         })?;
-    if let Err(source) = file.read_exact(&mut data[range]) {
+    if progress.events.is_none() {
+        read_exact_input(file, &mut data[range], path)?;
+        return Ok(());
+    }
+
+    const PROGRESS_CHUNK_BYTES: usize = 64 * 1024;
+    while !range.is_empty() {
+        let end = range.start + range.len().min(PROGRESS_CHUNK_BYTES);
+        read_exact_input(file, &mut data[range.start..end], path)?;
+        let chunk_bytes = (end - range.start) as u64;
+        *progress.additional_bytes_read = progress
+            .additional_bytes_read
+            .checked_add(chunk_bytes)
+            .ok_or(InputError::LimitExceeded {
+            resource: "bytes read",
+            limit: progress.max_bytes_read,
+        })?;
+        let total_bytes_read = progress
+            .bytes_already_read
+            .checked_add(*progress.additional_bytes_read)
+            .filter(|total| *total <= progress.max_bytes_read)
+            .ok_or(InputError::LimitExceeded {
+                resource: "bytes read",
+                limit: progress.max_bytes_read,
+            })?;
+        emit(
+            progress.events,
+            ProgressEvent::BytesRead { total_bytes_read },
+        );
+        range.start = end;
+    }
+    Ok(())
+}
+
+fn read_exact_input(file: &mut File, buffer: &mut [u8], path: &Path) -> Result<(), InputError> {
+    if let Err(source) = file.read_exact(buffer) {
         if source.kind() == io::ErrorKind::UnexpectedEof {
             return Err(InputError::Changed {
                 path: path.to_path_buf(),

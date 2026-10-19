@@ -4,7 +4,10 @@ use std::{
     path::Path,
 };
 
-use crate::input::{InputError, InputStamp, open_input_file, revalidate_input_file};
+use crate::{
+    input::{InputError, InputStamp, open_input_file, revalidate_input_file},
+    progress::{ProgressEvent, emit},
+};
 
 pub(super) struct FileBytesComparison<'a> {
     pub old_path: &'a Path,
@@ -17,7 +20,13 @@ pub(super) struct FileBytesComparison<'a> {
     pub max_bytes_read: u64,
 }
 
-pub(super) fn equal_file_bytes(comparison: FileBytesComparison<'_>) -> Result<bool, InputError> {
+pub(super) fn equal_file_bytes<F>(
+    comparison: FileBytesComparison<'_>,
+    progress: &mut Option<F>,
+) -> Result<(bool, u64), InputError>
+where
+    F: FnMut(ProgressEvent),
+{
     let FileBytesComparison {
         old_path,
         new_path,
@@ -33,7 +42,7 @@ pub(super) fn equal_file_bytes(comparison: FileBytesComparison<'_>) -> Result<bo
     if old_size != new_size {
         revalidate_comparison_file(&old, old_path, old_stamp)?;
         revalidate_comparison_file(&new, new_path, new_stamp)?;
-        return Ok(false);
+        return Ok((false, bytes_read));
     }
 
     let mut old_buffer = [0; 64 * 1024];
@@ -68,17 +77,23 @@ pub(super) fn equal_file_bytes(comparison: FileBytesComparison<'_>) -> Result<bo
             &mut bytes_read,
             max_bytes_read,
         )?;
+        emit(
+            progress,
+            ProgressEvent::BytesRead {
+                total_bytes_read: bytes_read,
+            },
+        );
         if old_buffer[..count] != new_buffer[..count] {
             revalidate_comparison_file(&old, old_path, old_stamp)?;
             revalidate_comparison_file(&new, new_path, new_stamp)?;
-            return Ok(false);
+            return Ok((false, bytes_read));
         }
         remaining -= count as u64;
     }
 
     revalidate_comparison_file(&old, old_path, old_stamp)?;
     revalidate_comparison_file(&new, new_path, new_stamp)?;
-    Ok(true)
+    Ok((true, bytes_read))
 }
 
 fn open_comparison_file(path: &Path, expected_stamp: &InputStamp) -> Result<File, InputError> {

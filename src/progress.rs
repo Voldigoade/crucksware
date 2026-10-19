@@ -5,15 +5,23 @@ use crate::{error::Side, model::Category};
 /// Inventory counts exclude the root directory. Revalidation counts include it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProgressPhase {
+    /// Inspection of a single input.
+    Inspection,
+    /// Comparison of two regular files.
+    FileComparison,
     /// Discovery of entries on one side of the comparison.
     Inventory(Side),
     /// Comparison of the unique paths found in either tree.
     Comparing,
     /// Final mutation checks for one side, including its root directory.
     Revalidation(Side),
+    /// Text and source analysis of changed regular files.
+    SourceAnalysis,
+    /// Format analysis of changed files not classified as text source.
+    BinaryAnalysis,
 }
 
-/// A path-free observation emitted by [`crate::compare_with_progress`].
+/// A path-free observation emitted by analysis and comparison operations.
 ///
 /// Events remain valid partial observations if a later operation fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

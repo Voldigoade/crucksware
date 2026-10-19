@@ -1,5 +1,10 @@
 use std::{fs, process::Command};
 
+use crucksware::{
+    compare_semantic_tree_with_progress,
+    limits::Limits,
+    progress::{ProgressEvent, ProgressPhase},
+};
 use tempfile::TempDir;
 
 mod common;
@@ -43,6 +48,99 @@ fn source_mode_reports_bounded_line_changes_for_unrecognized_text_files() {
         report["source_changes"][0]["language"],
         serde_json::Value::Null
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn semantic_tree_progress_reports_exact_candidate_totals() {
+    let (_temporary, old, new) = roots();
+    fs::write(old.join("main.rs"), "fn before() {}\n").unwrap();
+    fs::write(new.join("main.rs"), "fn after() {}\n").unwrap();
+    fs::create_dir(new.join("bin")).unwrap();
+    fs::write(new.join("bin/service"), common::minimal_elf64(0x401000)).unwrap();
+    let mut events = Vec::new();
+
+    let result = compare_semantic_tree_with_progress(
+        &old,
+        &new,
+        Limits::default(),
+        crucksware::source::DEFAULT_MAX_SOURCE_FILE_BYTES,
+        |event| events.push(event),
+    );
+
+    assert!(result.is_ok());
+    assert!(events.contains(&ProgressEvent::PhaseStarted {
+        phase: ProgressPhase::SourceAnalysis,
+        total: None,
+    }));
+    assert!(events.contains(&ProgressEvent::PhaseTotalKnown {
+        phase: ProgressPhase::SourceAnalysis,
+        total: 2,
+    }));
+    let source_phase_started = events
+        .iter()
+        .position(|event| {
+            *event
+                == ProgressEvent::PhaseStarted {
+                    phase: ProgressPhase::SourceAnalysis,
+                    total: None,
+                }
+        })
+        .unwrap();
+    let source_total_known = events
+        .iter()
+        .position(|event| {
+            *event
+                == ProgressEvent::PhaseTotalKnown {
+                    phase: ProgressPhase::SourceAnalysis,
+                    total: 2,
+                }
+        })
+        .unwrap();
+    assert!(source_phase_started < source_total_known);
+    assert!(events.contains(&ProgressEvent::PhaseProgress {
+        phase: ProgressPhase::SourceAnalysis,
+        completed: 2,
+        total: 2,
+    }));
+    assert!(events.contains(&ProgressEvent::PhaseStarted {
+        phase: ProgressPhase::BinaryAnalysis,
+        total: None,
+    }));
+    assert!(events.contains(&ProgressEvent::PhaseTotalKnown {
+        phase: ProgressPhase::BinaryAnalysis,
+        total: 1,
+    }));
+    let binary_phase_started = events
+        .iter()
+        .position(|event| {
+            *event
+                == ProgressEvent::PhaseStarted {
+                    phase: ProgressPhase::BinaryAnalysis,
+                    total: None,
+                }
+        })
+        .unwrap();
+    let binary_total_known = events
+        .iter()
+        .position(|event| {
+            *event
+                == ProgressEvent::PhaseTotalKnown {
+                    phase: ProgressPhase::BinaryAnalysis,
+                    total: 1,
+                }
+        })
+        .unwrap();
+    assert!(binary_phase_started < binary_total_known);
+    assert!(events.contains(&ProgressEvent::PhaseProgress {
+        phase: ProgressPhase::BinaryAnalysis,
+        completed: 1,
+        total: 1,
+    }));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ProgressEvent::BytesRead { total_bytes_read } if *total_bytes_read > 0
+    )));
 }
 
 #[test]

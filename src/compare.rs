@@ -36,7 +36,8 @@ fn compare_inner<F>(
 where
     F: FnMut(ProgressEvent),
 {
-    Ok(run_comparison(old, new, limits, progress)?.diff)
+    let mut progress = progress;
+    Ok(run_comparison(old, new, limits, &mut progress)?.diff)
 }
 
 struct ComparisonRun {
@@ -50,15 +51,15 @@ fn run_comparison<F>(
     old: &Path,
     new: &Path,
     limits: Limits,
-    mut progress: Option<F>,
+    progress: &mut Option<F>,
 ) -> Result<ComparisonRun, DiffError>
 where
     F: FnMut(ProgressEvent),
 {
     let mut budget = Budget::new(limits);
-    let old = scan_with_progress(old, Side::Old, &mut budget, &mut progress)?;
-    let new = scan_with_progress(new, Side::New, &mut budget, &mut progress)?;
-    let diff = compare_snapshots_with_progress(&old, &new, &mut budget, &mut progress)?;
+    let old = scan_with_progress(old, Side::Old, &mut budget, progress)?;
+    let new = scan_with_progress(new, Side::New, &mut budget, progress)?;
+    let diff = compare_snapshots_with_progress(&old, &new, &mut budget, progress)?;
     Ok(ComparisonRun {
         diff,
         old,
@@ -73,14 +74,45 @@ pub fn compare_semantic_tree(
     limits: Limits,
     max_source_file_bytes: u64,
 ) -> Result<SemanticTreeDiff, DiffError> {
+    compare_semantic_tree_inner(
+        old,
+        new,
+        limits,
+        max_source_file_bytes,
+        None::<fn(ProgressEvent)>,
+    )
+}
+
+/// Compares directories with source and supported binary analysis while reporting progress.
+pub fn compare_semantic_tree_with_progress(
+    old: &Path,
+    new: &Path,
+    limits: Limits,
+    max_source_file_bytes: u64,
+    progress: impl FnMut(ProgressEvent),
+) -> Result<SemanticTreeDiff, DiffError> {
+    compare_semantic_tree_inner(old, new, limits, max_source_file_bytes, Some(progress))
+}
+
+fn compare_semantic_tree_inner<F>(
+    old: &Path,
+    new: &Path,
+    limits: Limits,
+    max_source_file_bytes: u64,
+    mut progress: Option<F>,
+) -> Result<SemanticTreeDiff, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
     let max_entries = limits.max_entries;
-    let mut run = run_comparison(old, new, limits, None::<fn(ProgressEvent)>)?;
+    let mut run = run_comparison(old, new, limits, &mut progress)?;
     let source_changes = analyze_changes(
         &run.diff,
         &run.old,
         &run.new,
         &mut run.budget,
         max_source_file_bytes,
+        &mut progress,
     )?;
     let binary_changes = analyze_binary_changes(
         &run.diff,
@@ -89,10 +121,10 @@ pub fn compare_semantic_tree(
         &source_changes,
         &mut run.budget,
         max_entries,
+        &mut progress,
     )?;
-    let mut no_progress = None::<fn(ProgressEvent)>;
-    revalidate_with_progress(&run.old, Side::Old, &mut no_progress)?;
-    revalidate_with_progress(&run.new, Side::New, &mut no_progress)?;
+    revalidate_with_progress(&run.old, Side::Old, &mut progress)?;
+    revalidate_with_progress(&run.new, Side::New, &mut progress)?;
     Ok(SemanticTreeDiff {
         filesystem: run.diff,
         source_changes,
