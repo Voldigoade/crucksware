@@ -16,7 +16,9 @@ checks. New analysis capabilities are layered around that engine.
 These boundaries use focused modules and enums. They do not require a plugin registry.
 The filesystem comparison contract and JSON schema v1 remain unchanged. File comparison
 uses JSON schema v2. Semantic-tree comparison uses schema v4; schema v3 remains the
-documented source-only report shape.
+documented source-only report shape. Single-file inspection uses JSON schema v5. These
+schema versions identify report shapes and remain independent of the tool's semantic
+version.
 
 ## Detection contract
 
@@ -65,7 +67,13 @@ byte comparison only. Byte-level change is independent of semantic fact changes,
 semantic fact equality does not establish behavioral equivalence.
 
 File-comparison reports use JSON schema v2. Directory comparison remains on schema v1;
-the two schemas have distinct `analysis_type` values and are not interchangeable.
+the schemas have distinct `analysis_type` values and are not interchangeable.
+
+Single-file inspection reports use schema v5. They include the detected input kind,
+content classification, size, and available ELF or PE facts. Numeric sizes and addresses
+are decimal strings to preserve their full range. Byte names use `unix-percent-v1`
+encoding. Reports omit the local input path. Unknown regular files receive no fabricated
+format facts or fingerprint.
 
 ## Source-aware and mixed directory comparison
 
@@ -106,6 +114,14 @@ v1 and whose `source_changes` and `binary_changes` members carry the additional 
 Schema v3 remains the contract for the earlier source-only report shape. Schema versions
 identify report shapes and are independent of the tool's semantic version.
 
+All supported report models render as text, JSON, Markdown, and one-file offline HTML.
+Directory JSON remains schema v1, file-comparison JSON remains schema v2, combined
+source-aware directory JSON uses schema v4, and single-file inspection JSON uses schema
+v5. Markdown reports use a concise summary and safe encoded paths. The inspection Markdown
+report includes its structured facts as an indented JSON block. HTML reports include
+embedded CSS and static JavaScript; directory and semantic-tree reports provide local
+path and category filters. They do not load remote resources.
+
 The `similar` crate supplies the line-diff algorithm. Tree-sitter and its Rust, C, C++,
 and Python grammars provide one parser interface for the selected languages. The existing
 ELF and PE parsers provide static format facts for changed binaries. These analyses run
@@ -120,4 +136,5 @@ existing `compare` and `scan` modules handle extracted Linux root filesystem dir
 The `source` module layers bounded text diffs and selected syntax facts over the existing
 directory result. The `semantic_tree` module adds changed ELF and PE inspections and
 unknown-binary classifications, while `report::semantic_tree` renders the combined
-schema-v4 output.
+schema-v4 output. `report::inspection` renders schema-v5 single-input reports, and
+`report::binary` renders file-comparison reports without changing schema v2.

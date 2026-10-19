@@ -64,6 +64,153 @@ pub fn write_text(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Resul
     Ok(())
 }
 
+pub fn write_markdown(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
+    super::markdown::write_markdown_with_labels(
+        &diff.filesystem,
+        output,
+        "Total filesystem changes",
+        "No filesystem changes.",
+    )?;
+    if !diff.source_changes.is_empty() {
+        output.write_all(b"\n## Source analysis\n\n")?;
+        output.write_all(
+            b"| Path | Status | Language | Lines added | Lines removed | Hunks | Structural status |\n|:--|:--|:--|--:|--:|--:|:--|\n",
+        )?;
+        for change in &diff.source_changes {
+            write!(
+                output,
+                "| `{}` | {} | ",
+                encode_bytes(change.path.as_bytes()),
+                source_status_name(change.analysis_status)
+            )?;
+            write_markdown_cell(
+                output,
+                change.language.map_or("none", |language| language.as_str()),
+            )?;
+            writeln!(
+                output,
+                " | {} | {} | {} | {} |",
+                optional_count(change.lines_added),
+                optional_count(change.lines_removed),
+                optional_count(change.hunk_count),
+                structural_status_name(change.structural_status)
+            )?;
+        }
+
+        let has_structural_changes = diff
+            .source_changes
+            .iter()
+            .any(|change| !change.structural_changes.is_empty());
+        if has_structural_changes {
+            output.write_all(
+                b"\n### Structural changes\n\n| Path | Action | Kind | Name | Before signature | After signature |\n|:--|:--|:--|:--|:--|:--|\n",
+            )?;
+            for change in &diff.source_changes {
+                for structural in &change.structural_changes {
+                    write!(
+                        output,
+                        "| `{}` | {} | {} | ",
+                        encode_bytes(change.path.as_bytes()),
+                        structural.action.as_str(),
+                        structural.kind.as_str()
+                    )?;
+                    write_markdown_cell(output, &structural.name)?;
+                    output.write_all(b" | ")?;
+                    write_optional_markdown_cell(output, structural.before_signature.as_deref())?;
+                    output.write_all(b" | ")?;
+                    write_optional_markdown_cell(output, structural.after_signature.as_deref())?;
+                    output.write_all(b" |\n")?;
+                }
+            }
+        }
+    }
+
+    if !diff.binary_changes.is_empty() {
+        output.write_all(b"\n## Binary analysis\n\n")?;
+        output.write_all(
+            b"| Path | Old kind | New kind | Old size bytes | New size bytes | Byte-level changed | Semantic status |\n|:--|:--|:--|--:|--:|:--|:--|\n",
+        )?;
+        for change in &diff.binary_changes {
+            writeln!(
+                output,
+                "| `{}` | {} | {} | {} | {} | {} | {} |",
+                encode_bytes(change.path.as_bytes()),
+                optional_kind(change.old_kind),
+                optional_kind(change.new_kind),
+                optional_count(change.old_size_bytes),
+                optional_count(change.new_size_bytes),
+                optional_bool(change.byte_level_changed),
+                change.semantic_status.as_str()
+            )?;
+        }
+
+        let has_semantic_changes = diff
+            .binary_changes
+            .iter()
+            .any(|change| !change.semantic_changes.is_empty());
+        if has_semantic_changes {
+            output.write_all(
+                b"\n### Binary semantic changes\n\n| Path | Field | Before | After |\n|:--|:--|:--|:--|\n",
+            )?;
+            for change in &diff.binary_changes {
+                for semantic in &change.semantic_changes {
+                    write!(output, "| `{}` | ", encode_bytes(change.path.as_bytes()))?;
+                    write_markdown_cell(output, &semantic.field)?;
+                    output.write_all(b" | ")?;
+                    write_markdown_cell(output, &semantic.before.to_string())?;
+                    output.write_all(b" | ")?;
+                    write_markdown_cell(output, &semantic.after.to_string())?;
+                    output.write_all(b" |\n")?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn write_html(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
+    super::html::write_semantic_tree_html(diff, output)
+}
+
+pub(super) fn write_markdown_cell(output: &mut impl Write, value: &str) -> io::Result<()> {
+    for character in value.chars() {
+        match character {
+            '\\' => output.write_all(b"\\\\")?,
+            '|' => output.write_all(b"\\|")?,
+            '`' => output.write_all(b"&#96;")?,
+            '&' => output.write_all(b"&amp;")?,
+            '<' => output.write_all(b"&lt;")?,
+            '>' => output.write_all(b"&gt;")?,
+            '"' => output.write_all(b"&quot;")?,
+            '\'' => output.write_all(b"&#39;")?,
+            '\n' => output.write_all(b"<br>")?,
+            '\r' => output.write_all(b"\\r")?,
+            '\t' => output.write_all(b"\\t")?,
+            control if control.is_control() => write!(output, "\\u{{{:x}}}", control as u32)?,
+            character => write!(output, "{character}")?,
+        }
+    }
+    Ok(())
+}
+
+fn write_optional_markdown_cell(output: &mut impl Write, value: Option<&str>) -> io::Result<()> {
+    match value {
+        Some(value) => write_markdown_cell(output, value),
+        None => output.write_all(b"none"),
+    }
+}
+
+fn optional_count(value: Option<u64>) -> String {
+    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
+}
+
+fn source_status_name(status: SourceAnalysisStatus) -> &'static str {
+    match status {
+        SourceAnalysisStatus::Compared => "compared",
+        SourceAnalysisStatus::ContentKindChanged => "content_kind_changed",
+    }
+}
+
 fn write_structural_change(change: &StructuralChange, output: &mut impl Write) -> io::Result<()> {
     write!(
         output,

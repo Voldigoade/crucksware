@@ -47,7 +47,7 @@ struct CompareArgs {
         long,
         value_enum,
         default_value = "text",
-        help = "Report format; directory JSON uses schema v1, file v2, semantic-tree v4"
+        help = "Report format: text, JSON, Markdown, or offline HTML"
     )]
     format: OutputFormat,
 
@@ -103,6 +103,9 @@ struct CompareArgs {
 
 #[derive(Debug, Args)]
 struct InspectArgs {
+    #[arg(long, value_enum, default_value = "text")]
+    format: OutputFormat,
+
     #[arg(
         long,
         value_parser = parse_positive_u64,
@@ -124,6 +127,8 @@ struct InspectArgs {
 enum OutputFormat {
     Text,
     Json,
+    Markdown,
+    Html,
 }
 
 fn main() -> ExitCode {
@@ -150,9 +155,13 @@ fn run_inspect(args: InspectArgs) -> ExitCode {
 
     let stdout = io::stdout();
     let mut output = stdout.lock();
-    if let Err(error) =
-        report::inspection::write_inspection(&inspection, &mut output).and_then(|()| output.flush())
-    {
+    let report_result = match args.format {
+        OutputFormat::Text => report::inspection::write_inspection(&inspection, &mut output),
+        OutputFormat::Json => report::inspection::write_inspection_json(&inspection, &mut output),
+        OutputFormat::Markdown => report::inspection::write_markdown(&inspection, &mut output),
+        OutputFormat::Html => report::inspection::write_html(&inspection, &mut output),
+    };
+    if let Err(error) = report_result.and_then(|()| output.flush()) {
         eprintln!("crucksware: failed to write inspection: {error}");
         return ExitCode::from(2);
     }
@@ -298,6 +307,8 @@ fn write_report(diff: &Diff, format: OutputFormat) -> io::Result<()> {
     match format {
         OutputFormat::Text => report::text::write_text(diff, &mut output)?,
         OutputFormat::Json => report::json::write_json(diff, &mut output)?,
+        OutputFormat::Markdown => report::markdown::write_markdown(diff, &mut output)?,
+        OutputFormat::Html => report::html::write_html(diff, &mut output)?,
     }
     output.flush()
 }
@@ -308,6 +319,8 @@ fn write_file_report(comparison: &FileComparison, format: OutputFormat) -> io::R
     match format {
         OutputFormat::Text => report::binary::write_text(comparison, &mut output)?,
         OutputFormat::Json => report::binary::write_json(comparison, &mut output)?,
+        OutputFormat::Markdown => report::binary::write_markdown(comparison, &mut output)?,
+        OutputFormat::Html => report::binary::write_html(comparison, &mut output)?,
     }
     output.flush()
 }
@@ -318,6 +331,8 @@ fn write_semantic_tree_report(diff: &SemanticTreeDiff, format: OutputFormat) -> 
     match format {
         OutputFormat::Text => report::semantic_tree::write_text(diff, &mut output)?,
         OutputFormat::Json => report::semantic_tree::write_json(diff, &mut output)?,
+        OutputFormat::Markdown => report::semantic_tree::write_markdown(diff, &mut output)?,
+        OutputFormat::Html => report::semantic_tree::write_html(diff, &mut output)?,
     }
     output.flush()
 }

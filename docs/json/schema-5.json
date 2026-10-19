@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Voldigoade/crucksware/main/docs/json/schema-5.json",
+  "title": "Crucksware single-file inspection report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "analysis_type", "kind", "size_bytes", "content", "elf", "pe"],
+  "properties": {
+    "schema_version": { "const": 5 },
+    "analysis_type": { "const": "single_file_inspection" },
+    "kind": { "enum": ["directory", "elf", "pe", "text", "unknown_binary"] },
+    "size_bytes": { "$ref": "#/$defs/decimal_string" },
+    "content": { "enum": ["text", "binary"] },
+    "elf": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/elf" }] },
+    "pe": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/pe" }] }
+  },
+  "$defs": {
+    "decimal_string": {
+      "type": "string",
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-5])$"
+    },
+    "encoded_bytes": { "type": "string", "description": "Bytes encoded using unix-percent-v1." },
+    "elf_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "name", "type", "flags", "address", "size_bytes"],
+      "properties": {
+        "index": { "$ref": "#/$defs/decimal_string" },
+        "name": { "$ref": "#/$defs/encoded_bytes" },
+        "type": { "type": "string" },
+        "flags": { "type": "string" },
+        "address": { "$ref": "#/$defs/decimal_string" },
+        "size_bytes": { "$ref": "#/$defs/decimal_string" }
+      }
+    },
+    "elf_segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "type", "flags", "offset", "virtual_address", "file_size_bytes", "memory_size_bytes"],
+      "properties": {
+        "index": { "$ref": "#/$defs/decimal_string" },
+        "type": { "type": "string" },
+        "flags": { "type": "string" },
+        "offset": { "$ref": "#/$defs/decimal_string" },
+        "virtual_address": { "$ref": "#/$defs/decimal_string" },
+        "file_size_bytes": { "$ref": "#/$defs/decimal_string" },
+        "memory_size_bytes": { "$ref": "#/$defs/decimal_string" }
+      }
+    },
+    "elf_import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "name"],
+      "properties": {
+        "library": { "$ref": "#/$defs/encoded_bytes" },
+        "name": { "$ref": "#/$defs/encoded_bytes" }
+      }
+    },
+    "elf_symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "binding", "type", "value", "size_bytes"],
+      "properties": {
+        "name": { "$ref": "#/$defs/encoded_bytes" },
+        "binding": { "type": "string" },
+        "type": { "type": "string" },
+        "value": { "$ref": "#/$defs/decimal_string" },
+        "size_bytes": { "$ref": "#/$defs/decimal_string" }
+      }
+    },
+    "elf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "byte_order", "architecture", "machine", "elf_type", "entry_point", "sections", "segments", "interpreters", "dependencies", "imports", "exports", "symbols", "build_id", "gnu_stack_executable", "gnu_relro_segments"],
+      "properties": {
+        "class": { "enum": ["ELF32", "ELF64"] },
+        "byte_order": { "enum": ["little-endian", "big-endian"] },
+        "architecture": { "type": "string" },
+        "machine": { "type": "string" },
+        "elf_type": { "type": "string" },
+        "entry_point": { "$ref": "#/$defs/decimal_string" },
+        "sections": { "type": "array", "items": { "$ref": "#/$defs/elf_section" } },
+        "segments": { "type": "array", "items": { "$ref": "#/$defs/elf_segment" } },
+        "interpreters": { "type": "array", "items": { "$ref": "#/$defs/encoded_bytes" } },
+        "dependencies": { "type": "array", "items": { "$ref": "#/$defs/encoded_bytes" } },
+        "imports": { "type": "array", "items": { "$ref": "#/$defs/elf_import" } },
+        "exports": { "type": "array", "items": { "$ref": "#/$defs/encoded_bytes" } },
+        "symbols": { "type": "array", "items": { "$ref": "#/$defs/elf_symbol" } },
+        "build_id": { "type": ["string", "null"], "pattern": "^[0-9a-f]*$" },
+        "gnu_stack_executable": { "type": "array", "items": { "type": "boolean" } },
+        "gnu_relro_segments": { "$ref": "#/$defs/decimal_string" }
+      }
+    },
+    "pe_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "virtual_address", "virtual_size_bytes", "raw_offset", "raw_size_bytes", "characteristics"],
+      "properties": {
+        "name": { "$ref": "#/$defs/encoded_bytes" },
+        "virtual_address": { "$ref": "#/$defs/decimal_string" },
+        "virtual_size_bytes": { "$ref": "#/$defs/decimal_string" },
+        "raw_offset": { "$ref": "#/$defs/decimal_string" },
+        "raw_size_bytes": { "$ref": "#/$defs/decimal_string" },
+        "characteristics": { "$ref": "#/$defs/decimal_string" }
+      }
+    },
+    "pe_import_name": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": { "kind": { "const": "name" }, "value": { "$ref": "#/$defs/encoded_bytes" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": { "kind": { "const": "ordinal" }, "value": { "$ref": "#/$defs/decimal_string" } }
+        }
+      ]
+    },
+    "pe_import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "name"],
+      "properties": { "library": { "$ref": "#/$defs/encoded_bytes" }, "name": { "$ref": "#/$defs/pe_import_name" } }
+    },
+    "pe_export_target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "rva"],
+          "properties": { "kind": { "const": "address" }, "rva": { "$ref": "#/$defs/decimal_string" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "library", "name"],
+          "properties": { "kind": { "const": "forwarded_name" }, "library": { "$ref": "#/$defs/encoded_bytes" }, "name": { "$ref": "#/$defs/encoded_bytes" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "library", "ordinal"],
+          "properties": { "kind": { "const": "forwarded_ordinal" }, "library": { "$ref": "#/$defs/encoded_bytes" }, "ordinal": { "$ref": "#/$defs/decimal_string" } }
+        }
+      ]
+    },
+    "pe_export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ordinal", "name", "target"],
+      "properties": { "ordinal": { "$ref": "#/$defs/decimal_string" }, "name": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/encoded_bytes" }] }, "target": { "$ref": "#/$defs/pe_export_target" } }
+    },
+    "pe_resource_id": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": { "kind": { "const": "name" }, "value": { "$ref": "#/$defs/encoded_bytes" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": { "kind": { "const": "id" }, "value": { "$ref": "#/$defs/decimal_string" } }
+        }
+      ]
+    },
+    "pe_resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "data_rva", "size_bytes", "code_page"],
+      "properties": {
+        "path": { "type": "array", "items": { "$ref": "#/$defs/pe_resource_id" } },
+        "data_rva": { "$ref": "#/$defs/decimal_string" },
+        "size_bytes": { "$ref": "#/$defs/decimal_string" },
+        "code_page": { "$ref": "#/$defs/decimal_string" }
+      }
+    },
+    "pe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "architecture", "machine", "entry_point_rva", "image_base", "subsystem", "sections", "imports", "delay_imports", "exports", "resources", "pdb_info", "certificate_table"],
+      "properties": {
+        "format": { "enum": ["PE32", "PE32+"] },
+        "architecture": { "type": "string" },
+        "machine": { "$ref": "#/$defs/decimal_string" },
+        "entry_point_rva": { "$ref": "#/$defs/decimal_string" },
+        "image_base": { "$ref": "#/$defs/decimal_string" },
+        "subsystem": { "$ref": "#/$defs/decimal_string" },
+        "sections": { "type": "array", "items": { "$ref": "#/$defs/pe_section" } },
+        "imports": { "type": "array", "items": { "$ref": "#/$defs/pe_import" } },
+        "delay_imports": { "type": "array", "items": { "$ref": "#/$defs/pe_import" } },
+        "exports": { "type": "array", "items": { "$ref": "#/$defs/pe_export" } },
+        "resources": { "type": "array", "items": { "$ref": "#/$defs/pe_resource" } },
+        "pdb_info": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "guid", "age"],
+              "properties": { "path": { "$ref": "#/$defs/encoded_bytes" }, "guid": { "type": "string", "pattern": "^[0-9a-f]{32}$" }, "age": { "$ref": "#/$defs/decimal_string" } }
+            }
+          ]
+        },
+        "certificate_table": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file_offset", "size_bytes"],
+              "properties": { "file_offset": { "$ref": "#/$defs/decimal_string" }, "size_bytes": { "$ref": "#/$defs/decimal_string" } }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

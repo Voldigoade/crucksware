@@ -86,6 +86,7 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
     let inspect_help_text = String::from_utf8(inspect_help.stdout).unwrap();
     assert!(inspect_help_text.contains("--max-bytes-read"));
     assert!(inspect_help_text.contains("--max-entries"));
+    assert!(inspect_help_text.contains("--format"));
     assert!(inspect_help_text.contains("without executing it"));
 
     let version = binary().arg("--version").output().unwrap();
@@ -203,6 +204,119 @@ fn compare_dispatches_file_pairs_to_the_text_report_and_exit_code() {
     let report = String::from_utf8(output.stdout).unwrap();
     assert!(report.contains("Byte-level changed: no"));
     assert!(report.contains("Semantic comparison: unsupported"));
+}
+
+#[test]
+fn compare_supports_markdown_and_html_for_directory_and_file_reports() {
+    let (_temporary, old, new) = roots();
+    fs::write(old.join("config"), b"old\n").unwrap();
+    fs::write(new.join("config"), b"new\n").unwrap();
+
+    let markdown = run_compare(&old, &new, &["--format=markdown"]);
+    assert_eq!(markdown.status.code(), Some(1));
+    assert!(markdown.stderr.is_empty());
+    assert!(
+        String::from_utf8(markdown.stdout)
+            .unwrap()
+            .contains("# Crucksware report")
+    );
+
+    let html = run_compare(&old, &new, &["--format=html"]);
+    assert_eq!(html.status.code(), Some(1));
+    assert!(html.stderr.is_empty());
+    let html = String::from_utf8(html.stdout).unwrap();
+    assert!(html.starts_with("<!doctype html>"));
+    assert!(html.contains("MODIFIED"));
+    assert!(!html.contains("https://"));
+
+    let temporary = tempfile::tempdir().unwrap();
+    let old_file = temporary.path().join("old.bin");
+    let new_file = temporary.path().join("new.bin");
+    fs::write(&old_file, b"old").unwrap();
+    fs::write(&new_file, b"new").unwrap();
+    let file_report = run_compare(&old_file, &new_file, &["--format=markdown"]);
+    assert_eq!(file_report.status.code(), Some(1));
+    assert!(file_report.stderr.is_empty());
+    let file_report = String::from_utf8(file_report.stdout).unwrap();
+    assert!(file_report.starts_with("# Crucksware report"));
+    assert!(file_report.contains("| Byte-level changed | yes |"));
+}
+
+#[test]
+fn source_aware_reports_keep_schema_four_and_render_semantic_formats() {
+    let (_temporary, old, new) = roots();
+    fs::write(old.join("main.rs"), b"fn before() {}\n").unwrap();
+    fs::write(new.join("main.rs"), b"fn after() {}\n").unwrap();
+
+    let json = run_compare(&old, &new, &["--source-aware", "--format=json"]);
+    assert_eq!(json.status.code(), Some(1));
+    assert!(json.stderr.is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["source_changes"][0]["path"], "main.rs");
+
+    let markdown = run_compare(&old, &new, &["--source-aware", "--format=markdown"]);
+    assert_eq!(markdown.status.code(), Some(1));
+    assert!(markdown.stderr.is_empty());
+    let markdown = String::from_utf8(markdown.stdout).unwrap();
+    assert!(markdown.contains("## Source analysis"));
+    assert!(markdown.contains("before"));
+    assert!(markdown.contains("after"));
+
+    let html = run_compare(&old, &new, &["--source-aware", "--format=html"]);
+    assert_eq!(html.status.code(), Some(1));
+    assert!(html.stderr.is_empty());
+    let html = String::from_utf8(html.stdout).unwrap();
+    assert!(html.contains("SOURCE (1)"));
+    assert!(html.contains("before"));
+    assert!(html.contains("after"));
+    assert!(!html.contains("https://"));
+}
+
+#[test]
+fn inspect_supports_json_markdown_and_html_without_stdout_diagnostics() {
+    let temporary = tempfile::tempdir().unwrap();
+    let input = temporary.path().join("sample.txt");
+    fs::write(&input, b"plain text\n").unwrap();
+
+    let json = run_inspect(&input, &["--format=json"]);
+    assert_eq!(json.status.code(), Some(0));
+    assert!(json.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(report["schema_version"], 5);
+    assert_eq!(report["analysis_type"], "single_file_inspection");
+    assert_eq!(report["kind"], "text");
+
+    for format in ["markdown", "html"] {
+        let output = run_inspect(&input, &[&format!("--format={format}")]);
+        assert_eq!(output.status.code(), Some(0), "{format}");
+        assert!(output.stderr.is_empty(), "{format}");
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert!(output.contains("Crucksware report"));
+        if format == "html" {
+            assert!(output.starts_with("<!doctype html>"));
+            assert!(!output.contains("https://"));
+        }
+    }
+}
+
+#[test]
+fn inspect_elf_json_includes_static_facts_in_schema_five() {
+    let temporary = tempfile::tempdir().unwrap();
+    let input = temporary.path().join("program");
+    fs::write(&input, common::minimal_elf64(0x401000)).unwrap();
+
+    let output = run_inspect(&input, &["--format=json"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], 5);
+    assert_eq!(report["kind"], "elf");
+    assert_eq!(report["elf"]["class"], "ELF64");
+    assert_eq!(report["elf"]["byte_order"], "little-endian");
+    assert_eq!(report["elf"]["entry_point"], "4198400");
+    assert_eq!(report["elf"]["sections"].as_array().unwrap().len(), 0);
 }
 
 #[test]

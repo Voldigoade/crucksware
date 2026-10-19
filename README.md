@@ -24,9 +24,10 @@ Input files are never executed. Direct SquashFS input is not implemented.
 
 ## Design
 
-The [v0.1 design](docs/design/v0.1.md) defines the comparison and report contract,
-including the [JSON schema](docs/json/schema-1.json). File comparisons use
-[JSON schema version 2](docs/json/schema-2.json). The
+The [v0.1 design](docs/design/v0.1.md) defines the rootfs comparison contract, including
+[JSON schema v1](docs/json/schema-1.json). File comparisons use
+[schema v2](docs/json/schema-2.json). Single-file inspection uses
+[schema v5](docs/json/schema-5.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
 The [binary analysis design](docs/design/binary-analysis.md) describes current ELF and
 PE inspection and future format support. The [semantic analysis design](docs/design/semantic-analysis.md)
@@ -35,17 +36,21 @@ documents source-aware and mixed-directory comparison and their limits.
 ```sh
 crucksware compare old-rootfs/ new-rootfs/
 crucksware compare --format json old-rootfs/ new-rootfs/
+crucksware compare --format html old-rootfs/ new-rootfs/
 crucksware compare --source-aware project-v1/ project-v2/
+crucksware compare --source-aware --format markdown project-v1/ project-v2/
 crucksware compare old-program new-program
 crucksware inspect ./program.bin
+crucksware inspect --format json ./program.bin
 ```
 
-`compare` accepts either two directories or two regular files. Directory reports use
-JSON schema v1. File reports use schema v2 and show exact byte-level changes separately
-from normalized ELF or PE facts. If the detected formats differ, the report identifies
-the mismatch. Unknown files receive exact byte comparison only. The command exits with
-status 0 when no change is found, 1 when a change is found, and 2 when comparison or
-output fails. See `crucksware compare --help` for limits.
+`compare` accepts either two directories or two regular files. Select `text`, `json`,
+`markdown`, or `html` with `--format`. Directory JSON uses schema v1, file comparison
+uses schema v2, and source-aware directory comparison uses schema v4. File reports show
+exact byte-level changes separately from normalized ELF or PE facts. If the detected
+formats differ, the report identifies the mismatch. Unknown files receive exact byte
+comparison only. The command exits with status 0 when no change is found, 1 when a change
+is found, and 2 when comparison or output fails. See `crucksware compare --help` for limits.
 `inspect` parses bounded ELF and PE structure without executing the input. Both formats
 are limited to 64 MiB and 100,000 reported records by default. PE output includes
 sections, imports, exports, resource metadata, CodeView PDB identity where present, and
@@ -53,7 +58,9 @@ certificate-table location. It does not verify Authenticode signatures. Unknown 
 receive only a bounded text/binary classification. File comparison's byte-read limit
 is shared across inspection and exact comparison of both inputs, and its entry limit is
 shared across semantic parsing of both files. Directory-only depth and path-byte options
-do not apply to file comparisons. Use
+do not apply to file comparisons.
+`inspect` accepts the same four report formats and uses JSON schema v5. Its reports omit
+the input path so a saved report does not disclose a possibly sensitive local path. Use
 `crucksware inspect --help` to adjust inspection limits.
 `compare --source-aware` is a separate directory mode. It reports bounded line changes
 for changed text files and extracts definitions and imports from Rust, C, C++, and Python
@@ -69,14 +76,14 @@ and the report does not infer behavioral equivalence.
 ## Interactive shell
 
 Run `crucksware` without arguments to start the shell. Use `anal` or `analyze` to choose
-between inspecting one input and comparing two extracted rootfs directories, and `last`
-to review the most recent successful result.
+between inspecting one input, comparing two files, and comparing two directories. The
+shell supports filesystem and source-aware directory comparison. Use `last` to review
+the most recent successful result.
 `report text [OUTPUT]`, `report json [OUTPUT]`, `report markdown [OUTPUT]`, and
-`report html [OUTPUT]` export the latest directory comparison. Single-file inspections
-can be reviewed with `last` but cannot yet be exported. The shell prompts for an output
-path when omitted and asks before replacing an existing file. It does not save analysis
-history automatically. Report destinations inside either compared rootfs, symbolic-link
-destinations, and existing files with multiple hard links are refused.
+`report html [OUTPUT]` export the latest analysis. The shell prompts for an output path
+when omitted and asks before replacing an existing file. It does not save analysis history
+automatically. Report destinations inside compared directories, at an analyzed file path,
+symbolic-link destinations, and existing files with multiple hard links are refused.
 Replacing any existing report is also refused on non-Unix platforms because stable
 standard APIs do not expose the hard-link count there. Reports are rendered to a temporary
 file in the destination directory before publication. A failed render or write leaves an

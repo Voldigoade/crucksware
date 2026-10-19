@@ -47,12 +47,6 @@ pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session
         println!("No analysis has been completed in this session.");
         return;
     };
-    if !matches!(last, LastAnalysis::DirectoryComparison { .. }) {
-        eprintln!(
-            "crucksware: report export currently supports filesystem-only directory comparisons"
-        );
-        return;
-    }
     let output_path = if output_argument.is_empty() {
         match prompt_report_path(editor) {
             Some(path) => path,
@@ -93,22 +87,27 @@ fn write_report(
     format: ReportFormat,
     editor: &mut DefaultEditor,
 ) -> io::Result<bool> {
-    let LastAnalysis::DirectoryComparison { diff, roots } = last else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "reports are currently available for directory comparisons",
-        ));
+    let target = match last {
+        LastAnalysis::DirectoryComparison { roots, .. }
+        | LastAnalysis::SourceAwareComparison { roots, .. } => {
+            let roots = roots.as_ref().ok_or_else(input_paths_unavailable)?;
+            ensure_outside_roots(path, roots)?
+        }
+        LastAnalysis::FileInspection { input, .. } => {
+            let input = input.as_ref().ok_or_else(input_paths_unavailable)?;
+            ensure_not_inputs(path, std::slice::from_ref(input))?
+        }
+        LastAnalysis::FileComparison { inputs, .. } => {
+            let inputs = inputs.as_ref().ok_or_else(input_paths_unavailable)?;
+            ensure_not_inputs(path, inputs)?
+        }
     };
-    let roots = roots.as_ref().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "input paths are unavailable")
-    })?;
-    let target = ensure_outside_roots(path, roots)?;
     let Some(destination) = open_report_destination(&target, editor)? else {
         return Ok(false);
     };
     let replace = matches!(destination, ReportDestination::Replace);
     publish_report(&target, replace, |file| {
-        write_report_contents(diff, format, file)
+        write_report_contents(last, format, file)
     })?;
     Ok(true)
 }
@@ -140,16 +139,60 @@ fn publish_report(
 }
 
 fn write_report_contents(
-    diff: &crucksware::model::Diff,
+    last: &LastAnalysis,
     format: ReportFormat,
     file: &mut File,
 ) -> io::Result<()> {
     let mut output = BufWriter::new(file);
-    match format {
-        ReportFormat::Text => report::text::write_text(diff, &mut output)?,
-        ReportFormat::Json => report::json::write_json(diff, &mut output)?,
-        ReportFormat::Markdown => report::markdown::write_markdown(diff, &mut output)?,
-        ReportFormat::Html => report::html::write_html(diff, &mut output)?,
+    match (last, format) {
+        (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Text) => {
+            report::text::write_text(diff, &mut output)?
+        }
+        (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Json) => {
+            report::json::write_json(diff, &mut output)?
+        }
+        (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Markdown) => {
+            report::markdown::write_markdown(diff, &mut output)?
+        }
+        (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Html) => {
+            report::html::write_html(diff, &mut output)?
+        }
+        (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Text) => {
+            report::semantic_tree::write_text(diff, &mut output)?
+        }
+        (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Json) => {
+            report::semantic_tree::write_json(diff, &mut output)?
+        }
+        (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Markdown) => {
+            report::semantic_tree::write_markdown(diff, &mut output)?
+        }
+        (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Html) => {
+            report::semantic_tree::write_html(diff, &mut output)?
+        }
+        (LastAnalysis::FileInspection { inspection, .. }, ReportFormat::Text) => {
+            report::inspection::write_inspection(inspection, &mut output)?
+        }
+        (LastAnalysis::FileInspection { inspection, .. }, ReportFormat::Json) => {
+            report::inspection::write_inspection_json(inspection, &mut output)?
+        }
+        (LastAnalysis::FileInspection { inspection, .. }, ReportFormat::Markdown) => {
+            report::inspection::write_markdown(inspection, &mut output)?
+        }
+        (LastAnalysis::FileInspection { inspection, .. }, ReportFormat::Html) => {
+            report::inspection::write_html(inspection, &mut output)?
+        }
+        (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Text) => {
+            report::binary::write_text(comparison, &mut output)?
+        }
+        (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Json) => {
+            report::binary::write_json(comparison, &mut output)?
+        }
+        (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Markdown) => {
+            report::binary::write_markdown(comparison, &mut output)?
+        }
+        (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Html) => {
+            report::binary::write_html(comparison, &mut output)?
+        }
     }
     output.flush()
 }
@@ -165,6 +208,21 @@ fn ensure_outside_roots(path: &Path, roots: &[PathBuf; 2]) -> io::Result<PathBuf
         }
     }
     Ok(target)
+}
+
+fn ensure_not_inputs(path: &Path, inputs: &[PathBuf]) -> io::Result<PathBuf> {
+    let target = report_target(path)?;
+    if inputs.contains(&target) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "report output cannot replace an analyzed input",
+        ));
+    }
+    Ok(target)
+}
+
+fn input_paths_unavailable() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, "input paths are unavailable")
 }
 
 fn report_target(path: &Path) -> io::Result<PathBuf> {

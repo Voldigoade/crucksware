@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::{
     binary_compare::{FileComparison, SemanticChange, SemanticComparisonStatus},
     input::InputKind,
-    report::binary::{write_json, write_text},
+    report::binary::{write_html, write_json, write_markdown, write_text},
 };
 
 fn comparison() -> FileComparison {
@@ -65,4 +65,57 @@ fn schema_two_freezes_the_file_comparison_fields_and_statuses() {
     assert_eq!(required.len(), 9);
     assert!(required.iter().any(|field| field == "byte_level_changed"));
     assert!(required.iter().any(|field| field == "semantic_changes"));
+}
+
+#[test]
+fn markdown_file_report_is_deterministic_and_escapes_semantic_values() {
+    let mut comparison = comparison();
+    comparison.semantic_changes[0].field = "entry|point".to_owned();
+    comparison.semantic_changes[0].before = json!("<script>|old");
+    comparison.semantic_changes[0].after = json!("new|value");
+    let mut output = Vec::new();
+
+    write_markdown(&comparison, &mut output).unwrap();
+
+    assert_eq!(
+        String::from_utf8(output.clone()).unwrap(),
+        concat!(
+            "# Crucksware report\n\n## Summary\n\n",
+            "| Field | Value |\n|:--|:--|\n",
+            "| Old kind | ELF |\n| New kind | ELF |\n",
+            "| Old size bytes | 10 |\n| New size bytes | 11 |\n",
+            "| Byte-level changed | yes |\n| Semantic status | compared |\n",
+            "| Semantic fields changed | 1 |\n\n",
+            "## Semantic changes\n\n",
+            "| Field | Before | After |\n|:--|:--|:--|\n",
+            "| entry\\|point | &quot;&lt;script&gt;\\|old&quot; | &quot;new\\|value&quot; |\n"
+        )
+    );
+
+    let mut repeated = Vec::new();
+    write_markdown(&comparison, &mut repeated).unwrap();
+    assert_eq!(repeated, output);
+}
+
+#[test]
+fn html_file_report_is_offline_deterministic_and_escapes_semantic_values() {
+    let mut comparison = comparison();
+    comparison.semantic_changes[0].before = json!("</script><img src=x onerror=alert(1)>");
+    let mut output = Vec::new();
+
+    write_html(&comparison, &mut output).unwrap();
+    let html = String::from_utf8(output.clone()).unwrap();
+
+    assert!(html.starts_with("<!doctype html>\n<html lang=\"en\">"));
+    assert!(html.ends_with("</html>\n"));
+    assert!(html.contains("Binary comparison"));
+    assert!(html.contains("entry_point"));
+    assert!(html.contains("&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;"));
+    assert!(!html.contains("<img src=x"));
+    assert!(!html.contains("https://"));
+    assert!(!html.contains("<script src="));
+
+    let mut repeated = Vec::new();
+    write_html(&comparison, &mut repeated).unwrap();
+    assert_eq!(repeated, output);
 }
