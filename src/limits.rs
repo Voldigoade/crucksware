@@ -65,6 +65,10 @@ impl Budget {
         self.limits.max_bytes_read - self.bytes_read
     }
 
+    pub(crate) fn bytes_read(&self) -> u64 {
+        self.bytes_read
+    }
+
     #[cfg(target_os = "linux")]
     pub(crate) fn check_read(&self, bytes: u64) -> Result<(), DiffError> {
         checked_charge(

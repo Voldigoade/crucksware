@@ -4,6 +4,7 @@ pub mod error;
 pub mod limits;
 pub mod model;
 pub mod path;
+pub mod progress;
 
 #[cfg(target_os = "linux")]
 mod scan;
@@ -15,7 +16,7 @@ mod content;
 mod compare;
 
 #[cfg(target_os = "linux")]
-pub use compare::compare;
+pub use compare::{compare, compare_with_progress};
 
 #[cfg(not(target_os = "linux"))]
 pub fn compare(
@@ -23,6 +24,19 @@ pub fn compare(
     _new: &std::path::Path,
     _limits: limits::Limits,
 ) -> Result<model::Diff, error::DiffError> {
+    Err(error::DiffError::UnsupportedPlatform)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn compare_with_progress<F>(
+    _old: &std::path::Path,
+    _new: &std::path::Path,
+    _limits: limits::Limits,
+    _progress: F,
+) -> Result<model::Diff, error::DiffError>
+where
+    F: FnMut(progress::ProgressEvent),
+{
     Err(error::DiffError::UnsupportedPlatform)
 }
 

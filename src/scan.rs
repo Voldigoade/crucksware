@@ -14,9 +14,25 @@ use crate::{
     limits::Budget,
     model::{Entry, EntryKind, ObservedEntry, Snapshot, Stamp},
     path::RelPath,
+    progress::{ProgressEvent, ProgressPhase, emit},
 };
 
+#[cfg(test)]
 pub(crate) fn scan(root: &Path, side: Side, budget: &mut Budget) -> Result<Snapshot, DiffError> {
+    scan_with_progress(root, side, budget, &mut None::<fn(ProgressEvent)>)
+}
+
+pub(crate) fn scan_with_progress<F>(
+    root: &Path,
+    side: Side,
+    budget: &mut Budget,
+    progress: &mut Option<F>,
+) -> Result<Snapshot, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
+    let phase = ProgressPhase::Inventory(side);
+    emit(progress, ProgressEvent::PhaseStarted { phase, total: None });
     let root =
         fs::canonicalize(root).map_err(|source| io_error("resolve root", side, root, source))?;
     let metadata = fs::symlink_metadata(&root)
@@ -31,6 +47,7 @@ pub(crate) fn scan(root: &Path, side: Side, budget: &mut Budget) -> Result<Snaps
     }
     let root_stamp = stamp(&metadata);
     let mut entries = BTreeMap::new();
+    let mut discovered = progress.is_some().then_some(0u64);
     let mut stack = vec![(None, root_stamp.clone())];
     while let Some((parent, expected)) = stack.pop() {
         let directory = parent
@@ -81,7 +98,23 @@ pub(crate) fn scan(root: &Path, side: Side, budget: &mut Budget) -> Result<Snaps
             {
                 return Err(changed(side, &full));
             }
+            if let Some(discovered) = &mut discovered {
+                *discovered = discovered.checked_add(1).ok_or(DiffError::LimitExceeded {
+                    resource: crate::error::Resource::Entries,
+                    limit: u64::MAX,
+                })?;
+                emit(
+                    progress,
+                    ProgressEvent::EntryDiscovered {
+                        side,
+                        entries: *discovered,
+                    },
+                );
+            }
         }
+    }
+    if progress.is_some() {
+        emit(progress, ProgressEvent::PhaseCompleted { phase });
     }
     Ok(Snapshot {
         root,
@@ -90,9 +123,54 @@ pub(crate) fn scan(root: &Path, side: Side, budget: &mut Budget) -> Result<Snaps
     })
 }
 
+#[cfg(test)]
 pub(crate) fn revalidate(snapshot: &Snapshot, side: Side) -> Result<(), DiffError> {
+    revalidate_with_progress(snapshot, side, &mut None::<fn(ProgressEvent)>)
+}
+
+pub(crate) fn revalidate_with_progress<F>(
+    snapshot: &Snapshot,
+    side: Side,
+    progress: &mut Option<F>,
+) -> Result<(), DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
+    let phase = ProgressPhase::Revalidation(side);
+    let total = if progress.is_some() {
+        Some(
+            u64::try_from(snapshot.entries.len())
+                .ok()
+                .and_then(|count| count.checked_add(1))
+                .ok_or(DiffError::LimitExceeded {
+                    resource: crate::error::Resource::Entries,
+                    limit: u64::MAX,
+                })?,
+        )
+    } else {
+        None
+    };
+    if let Some(total) = total {
+        emit(
+            progress,
+            ProgressEvent::PhaseStarted {
+                phase,
+                total: Some(total),
+            },
+        );
+    }
     verify_stamp(&snapshot.root, &snapshot.root_stamp, side)?;
-    for (path, observed) in &snapshot.entries {
+    if let Some(total) = total {
+        emit(
+            progress,
+            ProgressEvent::PhaseProgress {
+                phase,
+                completed: 1,
+                total,
+            },
+        );
+    }
+    for (index, (path, observed)) in snapshot.entries.iter().enumerate() {
         let full = absolute_path(&snapshot.root, path);
         verify_stamp(&full, &observed.stamp, side)?;
         if let Entry::Symlink { target } = &observed.entry {
@@ -103,6 +181,26 @@ pub(crate) fn revalidate(snapshot: &Snapshot, side: Side) -> Result<(), DiffErro
             }
             verify_stamp(&full, &observed.stamp, side)?;
         }
+        if let Some(total) = total {
+            let completed = u64::try_from(index)
+                .ok()
+                .and_then(|index| index.checked_add(2))
+                .ok_or(DiffError::LimitExceeded {
+                    resource: crate::error::Resource::Entries,
+                    limit: u64::MAX,
+                })?;
+            emit(
+                progress,
+                ProgressEvent::PhaseProgress {
+                    phase,
+                    completed,
+                    total,
+                },
+            );
+        }
+    }
+    if total.is_some() {
+        emit(progress, ProgressEvent::PhaseCompleted { phase });
     }
     Ok(())
 }
