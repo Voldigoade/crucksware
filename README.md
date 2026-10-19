@@ -30,6 +30,19 @@ crucksware compare --format json old-rootfs/ new-rootfs/
 The command exits with status 0 when the trees have no differences, 1 when they do,
 and 2 when comparison or output fails. See `crucksware compare --help` for limits.
 
+## Interactive shell
+
+Run `crucksware` without arguments to start the shell. Use `anal` or `analyze` to compare
+two extracted rootfs directories, and `last` to review the most recent successful result.
+`report text [OUTPUT]` and `report json [OUTPUT]` export that result. The shell prompts
+for an output path when omitted and asks before replacing an existing file. It does not
+save analysis history automatically. Report destinations inside either compared rootfs,
+symbolic-link destinations, and existing files with multiple hard links are refused.
+Replacing any existing report is also refused on non-Unix platforms because stable
+standard APIs do not expose the hard-link count there. Keep the compared trees and report
+directory stable while a command runs; path-based operations do not contain hostile
+concurrent directory replacement.
+
 ## Development
 
 Install stable Rust with rustfmt and Clippy. The CLI uses clap; JSON output uses Serde

@@ -129,6 +129,333 @@ fn analysis_summary_counts_every_change_category_and_unchanged_entry() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn last_reports_when_no_analysis_has_been_completed() {
+    let output = run_shell(b"last\nreport text\nexit\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No analysis has been completed in this session."));
+    assert!(!stdout.contains("Report output path:"));
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn last_shows_the_most_recent_successful_analysis() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+
+    let input = format!("anal\n{}\n{}\nlast\nexit\n", old.display(), new.display());
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Analysis complete."));
+    assert!(stdout.contains("Last analysis."));
+    assert!(stdout.contains("1 entry compared"));
+    assert!(stdout.contains("Added: 1"));
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_exports_text_and_json_to_paths_with_spaces() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+    let text_path = temporary.path().join("text report.txt");
+    let json_path = temporary.path().join("json report.json");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nreport json {}\nexit\n",
+        old.display(),
+        new.display(),
+        text_path.display(),
+        json_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let text = std::fs::read_to_string(text_path).expect("text report is written");
+    assert!(text.starts_with("ADDED\tadded\tkind=file\n"));
+    assert!(text.ends_with(
+        "Summary: added=1 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n"
+    ));
+    let json = std::fs::read_to_string(json_path).expect("JSON report is written");
+    assert!(json.ends_with('\n'));
+    let report: serde_json::Value = serde_json::from_str(&json).expect("JSON report parses");
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["changes"][0]["path"], "added");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_preserves_leading_and_trailing_spaces_in_output_names() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let report_path = temporary.path().join(" report with spaces.txt ");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(
+        std::fs::read_to_string(report_path)
+            .expect("report with whitespace in its name is written")
+            .starts_with("ADDED\tadded\tkind=file\n")
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_prompts_for_a_path_when_one_is_not_supplied() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let report_path = temporary.path().join("prompted report.md");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text\n{}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(
+        std::fs::read_to_string(report_path)
+            .expect("prompted report is written")
+            .contains("ADDED\tadded\tkind=file")
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_requires_confirmation_before_overwriting_an_existing_file() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let report_path = temporary.path().join("existing report.txt");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+    std::fs::write(&report_path, b"keep this report").expect("existing report is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nn\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert_eq!(std::fs::read(&report_path).unwrap(), b"keep this report");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Report export cancelled."));
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_overwrites_an_existing_file_after_explicit_confirmation() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let report_path = temporary.path().join("existing report.txt");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+    std::fs::write(&report_path, b"replace this report").expect("existing report is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nyes\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(
+        std::fs::read_to_string(report_path)
+            .expect("confirmed report is written")
+            .starts_with("ADDED\tadded\tkind=file\n")
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_refuses_to_write_inside_a_compared_rootfs() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+    let report_path = old.join("report.txt");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(!report_path.exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("compared rootfs"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_refuses_a_symlinked_parent_that_resolves_inside_a_compared_rootfs() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let alias = temporary.path().join("output alias");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+    std::os::unix::fs::symlink(&old, &alias).expect("output alias is created");
+    let report_path = alias.join("report.txt");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(!old.join("report.txt").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("compared rootfs"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_refuses_to_replace_a_hard_linked_rootfs_file() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let source_file = old.join("source.txt");
+    let report_path = temporary.path().join("report.txt");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(&source_file, b"preserve source bytes").expect("source file is written");
+    std::fs::hard_link(&source_file, &report_path).expect("report path is hard linked");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read(&source_file).unwrap(),
+        b"preserve source bytes"
+    );
+    assert_eq!(
+        std::fs::read(report_path).unwrap(),
+        b"preserve source bytes"
+    );
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(std::fs::metadata(source_file).unwrap().nlink(), 2);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("multiple hard links"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Overwrite existing report?"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_refuses_symlink_destinations_without_modifying_the_target() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let source_file = old.join("source.txt");
+    let report_path = temporary.path().join("report.txt");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(&source_file, b"preserve source bytes").expect("source file is written");
+    std::os::unix::fs::symlink(&source_file, &report_path).expect("report link is created");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read(source_file).unwrap(),
+        b"preserve source bytes"
+    );
+    assert!(
+        std::fs::symlink_metadata(report_path)
+            .expect("report symlink remains")
+            .file_type()
+            .is_symlink()
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("symbolic link"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn failed_analysis_does_not_replace_the_last_successful_result() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let missing = temporary.path().join("missing");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nanal\n{}\n{}\nlast\nexit\n",
+        old.display(),
+        new.display(),
+        missing.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Last analysis."));
+    assert!(stdout.contains("Added: 1"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("analysis failed"));
+}
+
 fn run_shell(input: &[u8]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_crucksware"))
         .stdin(Stdio::piped())
