@@ -86,9 +86,12 @@ The source pass reads each changed regular file through a no-follow, nonblocking
 checks it against the inventory stamp before and after reading. It shares the directory
 comparison byte budget. A text file is bounded to 8 MiB by default and 64 MiB maximum;
 each side also contributes to the existing total byte-read limit. Text diffs are limited
-to 200,000 lines per side. Structural parsing traverses at most 500,000 syntax nodes and
-retains at most 50,000 facts per file. Exceeding a limit fails the comparison before any
-report is written.
+to 200,000 lines per side. After Tree-sitter has built a complete syntax tree, fact
+extraction visits at most 500,000 nodes and retains at most 50,000 facts per file.
+Exceeding these limits fails the comparison before any report is written. The node limit
+does not bound Tree-sitter's parse-time CPU or memory use. Parsing is limited by the
+source-file byte cap, but a file near the configured maximum can still require substantial
+resources. Keep the default 8 MiB cap when analyzing untrusted source trees.
 
 The initial structural languages are Rust, C, C++, and Python. Extensions are parser
 hints only. Changed text with an unsupported extension still receives a deterministic
