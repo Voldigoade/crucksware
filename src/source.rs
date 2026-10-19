@@ -2,6 +2,8 @@ use crate::{model::Diff, path::RelPath};
 
 pub const DEFAULT_MAX_SOURCE_FILE_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_SOURCE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_SOURCE_RECORDS: u64 = 50_000;
+pub(crate) const MAX_SOURCE_FACT_BYTES: u64 = 16 * 1024 * 1024;
 
 #[cfg(target_os = "linux")]
 mod parser;
@@ -151,6 +153,8 @@ pub(crate) fn analyze_changes(
     let mut completed = 0_u64;
     let mut analyzer = parser::Analyzer::new();
     let mut changes = Vec::new();
+    let mut source_records = 0_u64;
+    let mut report_fact_bytes = 0_u64;
     for change in &diff.changes {
         let old_entry = old.entries.get(&change.path);
         let new_entry = new.entries.get(&change.path);
@@ -216,6 +220,37 @@ pub(crate) fn analyze_changes(
             ) => None,
         };
         if let Some(file_change) = file_change {
+            let record_count = u64::try_from(file_change.structural_changes.len())
+                .ok()
+                .and_then(|count| count.checked_add(1))
+                .ok_or(DiffError::LimitExceeded {
+                    resource: Resource::SourceRecords,
+                    limit: MAX_SOURCE_RECORDS,
+                })?;
+            let fact_bytes = file_change
+                .structural_changes
+                .iter()
+                .try_fold(0_u64, |total, change| {
+                    total.checked_add(structural_fact_bytes(change)?)
+                })
+                .ok_or(DiffError::LimitExceeded {
+                    resource: Resource::SourceFactBytes,
+                    limit: MAX_SOURCE_FACT_BYTES,
+                })?;
+            report_fact_bytes = report_fact_bytes
+                .checked_add(fact_bytes)
+                .filter(|bytes| *bytes <= MAX_SOURCE_FACT_BYTES)
+                .ok_or(DiffError::LimitExceeded {
+                    resource: Resource::SourceFactBytes,
+                    limit: MAX_SOURCE_FACT_BYTES,
+                })?;
+            source_records = source_records
+                .checked_add(record_count)
+                .filter(|count| *count <= MAX_SOURCE_RECORDS)
+                .ok_or(DiffError::LimitExceeded {
+                    resource: Resource::SourceRecords,
+                    limit: MAX_SOURCE_RECORDS,
+                })?;
             changes.push(file_change);
         }
         if report_progress {
@@ -243,6 +278,21 @@ pub(crate) fn analyze_changes(
         emit(progress, ProgressEvent::PhaseCompleted { phase });
     }
     Ok(changes)
+}
+
+#[cfg(target_os = "linux")]
+fn structural_fact_bytes(change: &StructuralChange) -> Option<u64> {
+    let mut bytes = u64::try_from(change.name.len()).ok()?;
+    for signature in [
+        change.before_signature.as_ref(),
+        change.after_signature.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        bytes = bytes.checked_add(u64::try_from(signature.len()).ok()?)?;
+    }
+    Some(bytes)
 }
 
 #[cfg(target_os = "linux")]
