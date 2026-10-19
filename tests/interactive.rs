@@ -373,6 +373,141 @@ fn report_exports_self_contained_html() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn report_exports_source_aware_analysis_as_html() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old project");
+    let new = temporary.path().join("new project");
+    let report_path = temporary.path().join("source report.html");
+    std::fs::create_dir(&old).expect("old project is created");
+    std::fs::create_dir(&new).expect("new project is created");
+    std::fs::write(old.join("main.rs"), "fn before() {}\n").expect("old source is written");
+    std::fs::write(new.join("main.rs"), "fn after() {}\n").expect("new source is written");
+
+    let input = format!(
+        "anal\n3\n2\n{}\n{}\nreport html {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let html = std::fs::read_to_string(report_path).expect("HTML report is written");
+    assert!(html.contains("SOURCE (1)"));
+    assert!(html.contains("main.rs"));
+    assert!(html.contains("before"));
+    assert!(html.contains("after"));
+    assert!(!html.contains("https://"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_exports_file_inspection_json_and_protects_the_input() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let input_path = temporary.path().join("sample.bin");
+    let report_path = temporary.path().join("inspection.json");
+    std::fs::write(&input_path, b"\0\xffinput").expect("input is written");
+
+    let input = format!(
+        "anal\n1\n{}\nreport json {}\nreport json {}\nexit\n",
+        input_path.display(),
+        input_path.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("report output cannot replace an analyzed input"));
+    let json = std::fs::read_to_string(report_path).expect("inspection report is written");
+    let report: serde_json::Value = serde_json::from_str(&json).expect("report parses");
+    assert_eq!(report["schema_version"], 5);
+    assert_eq!(report["kind"], "unknown_binary");
+    assert_eq!(std::fs::read(input_path).unwrap(), b"\0\xffinput");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_exports_file_comparison_as_markdown() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old.bin");
+    let new = temporary.path().join("new.bin");
+    let report_path = temporary.path().join("file report.md");
+    std::fs::write(&old, b"before").expect("old file is written");
+    std::fs::write(&new, b"after").expect("new file is written");
+
+    let input = format!(
+        "anal\n2\n{}\n{}\nreport markdown {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let markdown = std::fs::read_to_string(report_path).expect("Markdown report is written");
+    assert!(markdown.contains("| Byte-level changed | yes |"));
+    assert!(markdown.contains("| Semantic status | unsupported |"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_refuses_to_replace_either_file_comparison_input() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old.bin");
+    let new = temporary.path().join("new.bin");
+    std::fs::write(&old, b"before").expect("old file is written");
+    std::fs::write(&new, b"after").expect("new file is written");
+
+    let input = format!(
+        "anal\n2\n{}\n{}\nreport json {}\nexit\n",
+        old.display(),
+        new.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("report output cannot replace an analyzed input")
+    );
+    assert_eq!(std::fs::read(old).unwrap(), b"before");
+    assert_eq!(std::fs::read(new).unwrap(), b"after");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_refuses_output_inside_source_aware_roots() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old project");
+    let new = temporary.path().join("new project");
+    std::fs::create_dir(&old).expect("old project is created");
+    std::fs::create_dir(&new).expect("new project is created");
+    std::fs::write(old.join("main.rs"), "fn before() {}\n").expect("old source is written");
+    std::fs::write(new.join("main.rs"), "fn after() {}\n").expect("new source is written");
+    let report_path = old.join("report.json");
+
+    let input = format!(
+        "anal\n3\n2\n{}\n{}\nreport json {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("report output cannot be inside a compared rootfs")
+    );
+    assert!(!report_path.exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn report_preserves_leading_and_trailing_spaces_in_output_names() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old");

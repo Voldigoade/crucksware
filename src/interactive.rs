@@ -34,9 +34,16 @@ enum LastAnalysis {
     },
     SourceAwareComparison {
         diff: SemanticTreeDiff,
+        roots: Option<[PathBuf; 2]>,
     },
-    FileInspection(Box<FileInspection>),
-    FileComparison(FileComparison),
+    FileInspection {
+        inspection: Box<FileInspection>,
+        input: Option<PathBuf>,
+    },
+    FileComparison {
+        comparison: FileComparison,
+        inputs: Option<[PathBuf; 2]>,
+    },
 }
 
 pub fn run() -> ExitCode {
@@ -112,17 +119,17 @@ fn show_last(session: &Session) {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
         }
-        Some(LastAnalysis::FileInspection(inspection)) => {
+        Some(LastAnalysis::FileInspection { inspection, .. }) => {
             if let Err(error) = write_inspection_summary(inspection, "Last inspection.") {
                 eprintln!("crucksware: failed to write inspection summary: {error}");
             }
         }
-        Some(LastAnalysis::SourceAwareComparison { diff }) => {
+        Some(LastAnalysis::SourceAwareComparison { diff, .. }) => {
             if let Err(error) = write_semantic_summary(diff, "Last source-aware analysis.") {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
         }
-        Some(LastAnalysis::FileComparison(comparison)) => {
+        Some(LastAnalysis::FileComparison { comparison, .. }) => {
             if let Err(error) = write_file_comparison_summary(comparison, "Last file comparison.") {
                 eprintln!("crucksware: failed to write comparison summary: {error}");
             }
@@ -212,6 +219,7 @@ fn inspect_one(editor: &mut DefaultEditor, session: &mut Session) {
     let Some(path) = prompt_path(editor, "Input: ") else {
         return;
     };
+    let report_input = fs::canonicalize(&path).ok();
     let inspection = match progress::ProgressRenderer::new() {
         Some(mut progress) => {
             let result = inspect_file_with_progress(
@@ -230,7 +238,10 @@ fn inspect_one(editor: &mut DefaultEditor, session: &mut Session) {
             if let Err(error) = write_inspection_summary(&inspection, "Inspection complete.") {
                 eprintln!("crucksware: failed to write inspection: {error}");
             }
-            session.last_analysis = Some(LastAnalysis::FileInspection(Box::new(inspection)));
+            session.last_analysis = Some(LastAnalysis::FileInspection {
+                inspection: Box::new(inspection),
+                input: report_input,
+            });
         }
         Err(error) => eprintln!("crucksware: inspection failed: {error}"),
     }
@@ -242,6 +253,10 @@ fn compare_two_files(editor: &mut DefaultEditor, session: &mut Session) {
     };
     let Some(new) = prompt_path(editor, "After file: ") else {
         return;
+    };
+    let report_inputs = match (fs::canonicalize(&old), fs::canonicalize(&new)) {
+        (Ok(old), Ok(new)) => Some([old, new]),
+        _ => None,
     };
 
     let comparison = match progress::ProgressRenderer::new() {
@@ -270,7 +285,10 @@ fn compare_two_files(editor: &mut DefaultEditor, session: &mut Session) {
             {
                 eprintln!("crucksware: failed to write comparison: {error}");
             }
-            session.last_analysis = Some(LastAnalysis::FileComparison(comparison));
+            session.last_analysis = Some(LastAnalysis::FileComparison {
+                comparison,
+                inputs: report_inputs,
+            });
         }
         Err(error) => eprintln!("crucksware: comparison failed: {error}"),
     }
@@ -321,15 +339,7 @@ fn compare_directories(editor: &mut DefaultEditor, session: &mut Session, source
 
     match result {
         Ok(DirectoryResult::Filesystem(diff)) => {
-            let roots = match (resolved_old, resolved_new) {
-                (Ok(old), Ok(new)) => Some([old, new]),
-                (Err(error), _) | (_, Err(error)) => {
-                    eprintln!(
-                        "crucksware: could not resolve input roots for report safety: {error}"
-                    );
-                    None
-                }
-            };
+            let roots = report_roots(&resolved_old, &resolved_new);
             session.last_analysis = Some(LastAnalysis::DirectoryComparison { diff, roots });
             if let Some(LastAnalysis::DirectoryComparison { diff, .. }) =
                 session.last_analysis.as_ref()
@@ -339,8 +349,9 @@ fn compare_directories(editor: &mut DefaultEditor, session: &mut Session, source
             }
         }
         Ok(DirectoryResult::SourceAware(diff)) => {
-            session.last_analysis = Some(LastAnalysis::SourceAwareComparison { diff });
-            if let Some(LastAnalysis::SourceAwareComparison { diff }) =
+            let roots = report_roots(&resolved_old, &resolved_new);
+            session.last_analysis = Some(LastAnalysis::SourceAwareComparison { diff, roots });
+            if let Some(LastAnalysis::SourceAwareComparison { diff, .. }) =
                 session.last_analysis.as_ref()
                 && let Err(error) = write_semantic_summary(diff, "Source-aware analysis complete.")
             {
@@ -348,6 +359,19 @@ fn compare_directories(editor: &mut DefaultEditor, session: &mut Session, source
             }
         }
         Err(error) => eprintln!("crucksware: analysis failed: {error}"),
+    }
+}
+
+fn report_roots(
+    old: &Result<PathBuf, io::Error>,
+    new: &Result<PathBuf, io::Error>,
+) -> Option<[PathBuf; 2]> {
+    match (old, new) {
+        (Ok(old), Ok(new)) => Some([old.clone(), new.clone()]),
+        (Err(error), _) | (_, Err(error)) => {
+            eprintln!("crucksware: could not resolve input roots for report safety: {error}");
+            None
+        }
     }
 }
 
@@ -495,7 +519,7 @@ fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static 
 
 fn print_help() {
     println!(
-        "Interactive commands:\n  anal         Inspect one input or compare files/directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest filesystem-only directory comparison\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
+        "Interactive commands:\n  anal         Inspect one input or compare files/directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest analysis\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
     );
 }
 

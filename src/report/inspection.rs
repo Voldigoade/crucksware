@@ -1,12 +1,17 @@
 use std::io::{self, Write};
 
+#[cfg(test)]
+mod tests;
+
 use crate::{
     input::InputKind,
     inspection::{
-        ElfInspection, FileInspection, PeExportTarget, PeImportName, PeInspection, PeResourceId,
+        ElfInspection, FileInspection, PeExportTarget, PeImport, PeImportName, PeInspection,
+        PeResourceId,
     },
     path::encode_bytes,
 };
+use serde_json::{Value, json};
 
 pub fn write_inspection(inspection: &FileInspection, output: &mut impl Write) -> io::Result<()> {
     let kind = match inspection.kind {
@@ -38,6 +43,194 @@ pub fn write_inspection(inspection: &FileInspection, output: &mut impl Write) ->
         writeln!(output, "Semantic format parsing: not performed")?;
     }
     Ok(())
+}
+
+pub fn write_inspection_json(
+    inspection: &FileInspection,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    let report = inspection_value(inspection);
+    serde_json::to_writer_pretty(&mut *output, &report)?;
+    output.write_all(b"\n")
+}
+
+pub fn write_markdown(inspection: &FileInspection, output: &mut impl Write) -> io::Result<()> {
+    output.write_all(b"# Crucksware report\n\n## Summary\n\n| Field | Value |\n|:--|:--|\n")?;
+    writeln!(output, "| Kind | {} |", inspection.kind.as_str())?;
+    writeln!(output, "| Size bytes | {} |", inspection.size_bytes)?;
+    writeln!(output, "| Content | {} |\n", inspection.content)?;
+    output.write_all(b"## Structured facts\n\n")?;
+
+    let report = inspection_value(inspection);
+    let mut json = Vec::new();
+    serde_json::to_writer_pretty(&mut json, &report)?;
+    json.push(b'\n');
+    for line in json.split_inclusive(|byte| *byte == b'\n') {
+        output.write_all(b"    ")?;
+        output.write_all(line)?;
+    }
+    Ok(())
+}
+
+pub fn write_html(inspection: &FileInspection, output: &mut impl Write) -> io::Result<()> {
+    output.write_all(
+        b"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Crucksware report</title>\n<style>",
+    )?;
+    output.write_all(super::html::STYLE.as_bytes())?;
+    output.write_all(b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n<section aria-labelledby=\"summary-heading\">\n<h2 id=\"summary-heading\">Inspection summary</h2>\n<table class=\"summary\">\n<tbody>\n")?;
+    write_inspection_html_row(output, "Kind", inspection.kind.as_str())?;
+    write_inspection_html_row(output, "Size bytes", &inspection.size_bytes.to_string())?;
+    write_inspection_html_row(output, "Content", &inspection.content.to_string())?;
+    output.write_all(b"</tbody>\n</table>\n</section>\n<section aria-labelledby=\"facts-heading\">\n<h2 id=\"facts-heading\">Structured facts</h2>\n<pre><code>")?;
+    let report = inspection_value(inspection);
+    let mut json = Vec::new();
+    serde_json::to_writer_pretty(&mut json, &report)?;
+    json.push(b'\n');
+    let json = std::str::from_utf8(&json)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    super::html::write_escaped(output, json)?;
+    output.write_all(b"</code></pre>\n</section>\n</main>\n</body>\n</html>\n")
+}
+
+fn write_inspection_html_row(output: &mut impl Write, label: &str, value: &str) -> io::Result<()> {
+    output.write_all(b"<tr><th scope=\"row\">")?;
+    super::html::write_escaped(output, label)?;
+    output.write_all(b"</th><td>")?;
+    super::html::write_escaped(output, value)?;
+    output.write_all(b"</td></tr>\n")
+}
+
+fn inspection_value(inspection: &FileInspection) -> Value {
+    json!({
+        "schema_version": 5,
+        "analysis_type": "single_file_inspection",
+        "kind": inspection.kind.as_str(),
+        "size_bytes": inspection.size_bytes.to_string(),
+        "content": inspection.content.to_string(),
+        "elf": inspection.elf.as_ref().map(elf_value),
+        "pe": inspection.pe.as_ref().map(pe_value),
+    })
+}
+
+fn elf_value(elf: &ElfInspection) -> Value {
+    json!({
+        "class": elf.class,
+        "byte_order": elf.byte_order,
+        "architecture": elf.architecture,
+        "machine": elf.machine,
+        "elf_type": elf.elf_type,
+        "entry_point": elf.entry_point.to_string(),
+        "sections": elf.sections.iter().map(|section| json!({
+            "index": section.index.to_string(),
+            "name": encode_bytes(&section.name),
+            "type": section.section_type,
+            "flags": section.flags,
+            "address": section.address.to_string(),
+            "size_bytes": section.size.to_string(),
+        })).collect::<Vec<_>>(),
+        "segments": elf.segments.iter().map(|segment| json!({
+            "index": segment.index.to_string(),
+            "type": segment.segment_type,
+            "flags": segment.flags,
+            "offset": segment.offset.to_string(),
+            "virtual_address": segment.virtual_address.to_string(),
+            "file_size_bytes": segment.file_size.to_string(),
+            "memory_size_bytes": segment.memory_size.to_string(),
+        })).collect::<Vec<_>>(),
+        "interpreters": elf.interpreters.iter().map(|value| encode_bytes(value)).collect::<Vec<_>>(),
+        "dependencies": elf.dependencies.iter().map(|value| encode_bytes(value)).collect::<Vec<_>>(),
+        "imports": elf.imports.iter().map(|import| json!({
+            "library": encode_bytes(&import.library),
+            "name": encode_bytes(&import.name),
+        })).collect::<Vec<_>>(),
+        "exports": elf.exports.iter().map(|value| encode_bytes(value)).collect::<Vec<_>>(),
+        "symbols": elf.symbols.iter().map(|symbol| json!({
+            "name": encode_bytes(&symbol.name),
+            "binding": symbol.binding,
+            "type": symbol.symbol_type,
+            "value": symbol.value.to_string(),
+            "size_bytes": symbol.size.to_string(),
+        })).collect::<Vec<_>>(),
+        "build_id": elf.build_id.as_ref().map(|bytes| hex(bytes)),
+        "gnu_stack_executable": elf.gnu_stack_executable,
+        "gnu_relro_segments": elf.gnu_relro_segments.to_string(),
+    })
+}
+
+fn pe_value(pe: &PeInspection) -> Value {
+    json!({
+        "format": pe.format,
+        "architecture": pe.architecture,
+        "machine": pe.machine.to_string(),
+        "entry_point_rva": pe.entry_point_rva.to_string(),
+        "image_base": pe.image_base.to_string(),
+        "subsystem": pe.subsystem.to_string(),
+        "sections": pe.sections.iter().map(|section| json!({
+            "name": encode_bytes(&section.name),
+            "virtual_address": section.virtual_address.to_string(),
+            "virtual_size_bytes": section.virtual_size.to_string(),
+            "raw_offset": section.raw_offset.to_string(),
+            "raw_size_bytes": section.raw_size.to_string(),
+            "characteristics": section.characteristics.to_string(),
+        })).collect::<Vec<_>>(),
+        "imports": pe.imports.iter().map(pe_import_value).collect::<Vec<_>>(),
+        "delay_imports": pe.delay_imports.iter().map(pe_import_value).collect::<Vec<_>>(),
+        "exports": pe.exports.iter().map(|export| json!({
+            "ordinal": export.ordinal.to_string(),
+            "name": export.name.as_ref().map(|name| encode_bytes(name)),
+            "target": pe_export_target_value(&export.target),
+        })).collect::<Vec<_>>(),
+        "resources": pe.resources.iter().map(|resource| json!({
+            "path": resource.path.iter().map(pe_resource_id_value).collect::<Vec<_>>(),
+            "data_rva": resource.data_rva.to_string(),
+            "size_bytes": resource.size.to_string(),
+            "code_page": resource.code_page.to_string(),
+        })).collect::<Vec<_>>(),
+        "pdb_info": pe.pdb_info.as_ref().map(|pdb| json!({
+            "path": encode_bytes(&pdb.path),
+            "guid": hex(&pdb.guid),
+            "age": pdb.age.to_string(),
+        })),
+        "certificate_table": pe.certificate_table.as_ref().map(|certificate| json!({
+            "file_offset": certificate.file_offset.to_string(),
+            "size_bytes": certificate.size.to_string(),
+        })),
+    })
+}
+
+fn pe_import_value(import: &PeImport) -> Value {
+    let name = match &import.name {
+        PeImportName::Name(name) => json!({"kind": "name", "value": encode_bytes(name)}),
+        PeImportName::Ordinal(ordinal) => {
+            json!({"kind": "ordinal", "value": ordinal.to_string()})
+        }
+    };
+    json!({"library": encode_bytes(&import.library), "name": name})
+}
+
+fn pe_export_target_value(target: &PeExportTarget) -> Value {
+    match target {
+        PeExportTarget::Address(address) => {
+            json!({"kind": "address", "rva": address.to_string()})
+        }
+        PeExportTarget::ForwardedName { library, name } => json!({
+            "kind": "forwarded_name",
+            "library": encode_bytes(library),
+            "name": encode_bytes(name),
+        }),
+        PeExportTarget::ForwardedOrdinal { library, ordinal } => json!({
+            "kind": "forwarded_ordinal",
+            "library": encode_bytes(library),
+            "ordinal": ordinal.to_string(),
+        }),
+    }
+}
+
+fn pe_resource_id_value(id: &PeResourceId) -> Value {
+    match id {
+        PeResourceId::Name(name) => json!({"kind": "name", "value": encode_bytes(name)}),
+        PeResourceId::Id(id) => json!({"kind": "id", "value": id.to_string()}),
+    }
 }
 
 fn write_pe(pe: &PeInspection, output: &mut impl Write) -> io::Result<()> {

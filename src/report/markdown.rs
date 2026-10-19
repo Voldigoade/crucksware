@@ -10,6 +10,15 @@ use crate::{
 mod tests;
 
 pub fn write_markdown(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
+    write_markdown_with_labels(diff, output, "Total changes", "No changes.")
+}
+
+pub(super) fn write_markdown_with_labels(
+    diff: &Diff,
+    output: &mut impl Write,
+    total_label: &str,
+    empty_message: &str,
+) -> io::Result<()> {
     let total_changes = validate_diff_summary(diff)?;
 
     output.write_all(b"# Crucksware report\n\n## Summary\n\n")?;
@@ -23,12 +32,13 @@ pub fn write_markdown(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
         "| Metadata changed | {} |",
         diff.summary.metadata_changed
     )?;
-    writeln!(output, "| Total changes | {total_changes} |")?;
+    writeln!(output, "| {total_label} | {total_changes} |")?;
     writeln!(output, "| Unchanged | {} |\n", diff.summary.unchanged)?;
     output.write_all(b"## Changes\n\n")?;
 
     if diff.changes.is_empty() {
-        return output.write_all(b"No changes.\n");
+        output.write_all(empty_message.as_bytes())?;
+        return output.write_all(b"\n");
     }
 
     let mut wrote_group = false;

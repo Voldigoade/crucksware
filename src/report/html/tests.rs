@@ -127,6 +127,7 @@ fn empty_diff_renders_a_summary_without_change_groups() {
 #[test]
 fn escapes_all_html_special_characters() {
     assert_eq!(super::escape_html("<&>\"'"), "&lt;&amp;&gt;&quot;&#39;");
+    assert_eq!(super::escape_html("<\u{1}>"), "&lt;\\u{1}&gt;");
 }
 
 #[test]
