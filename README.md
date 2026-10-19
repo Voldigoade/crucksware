@@ -2,9 +2,11 @@
 
 Semantic firmware diff and triage in Rust.
 
-**Experimental and under active development.** The Linux comparison core for two
-extracted root filesystem directories and deterministic text and JSON report writers
-are implemented, with a CLI for comparing two trees. There are no releases.
+**Experimental and under active development.** Linux comparison of two extracted root
+filesystem directories is implemented, including exact bounded regular-file comparison
+and filesystem metadata. The direct CLI provides deterministic text and JSON schema v1
+reports. The interactive shell adds session summaries and text, JSON, Markdown, and
+offline HTML exports with live progress. No releases have been published.
 
 The comparison reads equal-sized regular files when their contents must be distinguished.
 Input trees must remain stable during a comparison. Path-based checks do not provide an

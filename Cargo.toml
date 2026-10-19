@@ -1,6 +1,6 @@
 [package]
 name = "crucksware"
-version = "0.1.0-dev.0"
+version = "0.1.0"
 edition = "2024"
 description = "Semantic firmware diff and triage in Rust."
 license = "MIT OR Apache-2.0"

@@ -2,11 +2,13 @@
 
 Crucksware follows Semantic Versioning. No releases have been published.
 
-## Unreleased
+## 0.1.0 release candidate
 
-- Initialize the Rust package and Linux CI for extracted root filesystem comparison.
-- Add the experimental Linux comparison core with lossless paths, typed metadata,
-  bounded inventory and reads, mutation checks, and deterministic classification.
-- Add deterministic text and schema-versioned JSON reports.
-- Add the comparison CLI with deterministic output, explicit resource limits, and
-  documented process exit statuses.
+- Compare two extracted Linux root filesystem trees using bounded inventory, exact
+  regular-file comparison, metadata classification, and mutation checks.
+- Provide a direct CLI with deterministic text output, JSON schema version 1, and
+  explicit resource limits and exit statuses.
+- Provide an interactive shell with session summaries, live progress, and text, JSON,
+  Markdown, and offline HTML report export.
+- Keep input trees read-only and report filesystem, resource, mutation, and output errors
+  without emitting partial successful results.
