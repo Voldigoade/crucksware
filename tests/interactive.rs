@@ -229,6 +229,38 @@ fn report_exports_markdown_with_safe_paths_and_summary() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn report_exports_self_contained_html() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let input_file = new.join("input <script>");
+    let report_path = temporary.path().join("html report.html");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(&input_file, b"new").expect("new file is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport html {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let html = std::fs::read_to_string(report_path).expect("HTML report is written");
+    assert!(html.starts_with("<!doctype html>"));
+    assert!(html.contains("input%20%3Cscript%3E"));
+    assert!(!html.contains("input <script>"));
+    assert!(html.contains("id=\"path-filter\""));
+    assert!(html.contains("id=\"category-filter\""));
+    assert!(!html.contains("https://"));
+    assert_eq!(std::fs::read(input_file).unwrap(), b"new");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn report_preserves_leading_and_trailing_spaces_in_output_names() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old");

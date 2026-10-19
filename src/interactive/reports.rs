@@ -15,6 +15,7 @@ enum ReportFormat {
     Text,
     Json,
     Markdown,
+    Html,
 }
 
 enum ReportDestination {
@@ -31,15 +32,16 @@ pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session
         None => (arguments, ""),
     };
     if format.is_empty() {
-        eprintln!("Usage: report <text|json|markdown> [OUTPUT]");
+        eprintln!("Usage: report <text|json|markdown|html> [OUTPUT]");
         return;
     }
     let format = match format {
         "text" => ReportFormat::Text,
         "json" => ReportFormat::Json,
         "markdown" => ReportFormat::Markdown,
+        "html" => ReportFormat::Html,
         _ => {
-            eprintln!("crucksware: report format must be `text`, `json`, or `markdown`");
+            eprintln!("crucksware: report format must be `text`, `json`, `markdown`, or `html`");
             return;
         }
     };
@@ -120,6 +122,7 @@ fn write_report_contents(last: &LastAnalysis, format: ReportFormat, file: File) 
         ReportFormat::Text => report::text::write_text(&last.diff, &mut output)?,
         ReportFormat::Json => report::json::write_json(&last.diff, &mut output)?,
         ReportFormat::Markdown => report::markdown::write_markdown(&last.diff, &mut output)?,
+        ReportFormat::Html => report::html::write_html(&last.diff, &mut output)?,
     }
     output.flush()
 }

@@ -1,8 +1,8 @@
 use std::io::{self, Write};
 
-use super::shared::{category_name, changed_field_name};
+use super::shared::{category_name, changed_field_name, validate_diff_summary};
 use crate::{
-    model::{Category, ChangedField, Diff, Entry, Summary},
+    model::{Category, ChangedField, Diff, Entry},
     path::encode_bytes,
 };
 
@@ -10,8 +10,7 @@ use crate::{
 mod tests;
 
 pub fn write_markdown(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
-    validate_summary(diff)?;
-    let total_changes = total_changes(&diff.summary)?;
+    let total_changes = validate_diff_summary(diff)?;
 
     output.write_all(b"# Crucksware report\n\n## Summary\n\n")?;
     output.write_all(b"| Category | Count |\n|:--|--:|\n")?;
@@ -61,49 +60,6 @@ pub fn write_markdown(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
     }
 
     Ok(())
-}
-
-fn validate_summary(diff: &Diff) -> io::Result<()> {
-    let mut actual = Summary::default();
-    for change in &diff.changes {
-        let count = match change.category {
-            Category::Added => &mut actual.added,
-            Category::Removed => &mut actual.removed,
-            Category::Modified => &mut actual.modified,
-            Category::TypeChanged => &mut actual.type_changed,
-            Category::MetadataChanged => &mut actual.metadata_changed,
-        };
-        *count = count
-            .checked_add(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "change count overflowed"))?;
-    }
-
-    let summary = &diff.summary;
-    if actual.added != summary.added
-        || actual.removed != summary.removed
-        || actual.modified != summary.modified
-        || actual.type_changed != summary.type_changed
-        || actual.metadata_changed != summary.metadata_changed
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "summary counts do not match changes",
-        ));
-    }
-    Ok(())
-}
-
-fn total_changes(summary: &Summary) -> io::Result<u64> {
-    [
-        summary.added,
-        summary.removed,
-        summary.modified,
-        summary.type_changed,
-        summary.metadata_changed,
-    ]
-    .into_iter()
-    .try_fold(0_u64, u64::checked_add)
-    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "change count overflowed"))
 }
 
 fn write_change(change: &crate::model::Change, output: &mut impl Write) -> io::Result<()> {
