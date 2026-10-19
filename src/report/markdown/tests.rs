@@ -144,7 +144,11 @@ fn renders_a_deterministic_golden_with_every_category_and_changed_field() {
     let mut actual = Vec::new();
     write_markdown(&diff, &mut actual).unwrap();
 
-    assert_eq!(actual, expected.as_bytes());
+    let actual_text = String::from_utf8(actual.clone()).unwrap();
+    assert!(actual_text.starts_with(
+        "# Crucksware report\n\n## Readable summary\n\nFilesystem: 6 changes across 14 entries (1 added, 1 removed, 2 modified, 1 type changed, 1 metadata changed, 8 unchanged).\n\n### Notable changes\n\n"
+    ), "{actual_text}");
+    assert!(actual_text.ends_with(expected.strip_prefix("# Crucksware report\n\n").unwrap()));
     assert!(
         !String::from_utf8(actual.clone())
             .unwrap()
@@ -161,10 +165,13 @@ fn empty_diff_has_a_stable_summary_and_no_changes_message() {
     let mut actual = Vec::new();
     write_markdown(&Diff::default(), &mut actual).unwrap();
 
+    let actual = String::from_utf8(actual).unwrap();
     assert_eq!(
         actual,
         concat!(
             "# Crucksware report\n\n",
+            "## Readable summary\n\n",
+            "No changes were found.\n\n",
             "## Summary\n\n",
             "| Category | Count |\n",
             "|:--|--:|\n",
@@ -178,7 +185,6 @@ fn empty_diff_has_a_stable_summary_and_no_changes_message() {
             "## Changes\n\n",
             "No changes.\n"
         )
-        .as_bytes()
     );
 }
 

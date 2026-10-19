@@ -17,6 +17,10 @@ use crucksware::{
     },
     limits::Limits,
     model::Diff,
+    readable::{
+        EvidenceError, EvidencePacket, select_file_comparison, select_filesystem,
+        select_semantic_tree,
+    },
     report,
     semantic_tree::SemanticTreeDiff,
 };
@@ -25,6 +29,7 @@ use rustyline::{DefaultEditor, config::Configurer, error::ReadlineError};
 #[derive(Default)]
 struct Session {
     last_analysis: Option<LastAnalysis>,
+    evidence: Option<EvidencePacket>,
 }
 
 enum LastAnalysis {
@@ -105,6 +110,7 @@ fn execute_command(
         "clear" if arguments.trim().is_empty() => clear_screen(),
         "anal" | "analyze" if arguments.trim().is_empty() => analyze(editor, session),
         "last" if arguments.trim().is_empty() => show_last(session),
+        "explain" => explain(arguments, session),
         "report" => reports::export_report(arguments, editor, session),
         "exit" | "quit" if arguments.trim().is_empty() => return false,
         _ => eprintln!("Unknown command. Type `help` for available commands."),
@@ -115,7 +121,9 @@ fn execute_command(
 fn show_last(session: &Session) {
     match session.last_analysis.as_ref() {
         Some(LastAnalysis::DirectoryComparison { diff, .. }) => {
-            if let Err(error) = write_summary(diff, "Last analysis.") {
+            if let Some(evidence) = &session.evidence {
+                write_evidence_summary(evidence, "Last analysis.");
+            } else if let Err(error) = write_summary(diff, "Last analysis.") {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
         }
@@ -125,16 +133,58 @@ fn show_last(session: &Session) {
             }
         }
         Some(LastAnalysis::SourceAwareComparison { diff, .. }) => {
-            if let Err(error) = write_semantic_summary(diff, "Last source-aware analysis.") {
+            if let Some(evidence) = &session.evidence {
+                write_evidence_summary(evidence, "Last source-aware analysis.");
+            } else if let Err(error) = write_semantic_summary(diff, "Last source-aware analysis.") {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
         }
         Some(LastAnalysis::FileComparison { comparison, .. }) => {
-            if let Err(error) = write_file_comparison_summary(comparison, "Last file comparison.") {
+            if let Some(evidence) = &session.evidence {
+                write_evidence_summary(evidence, "Last file comparison.");
+            } else if let Err(error) =
+                write_file_comparison_summary(comparison, "Last file comparison.")
+            {
                 eprintln!("crucksware: failed to write comparison summary: {error}");
             }
         }
         None => println!("No analysis has been completed in this session."),
+    }
+}
+
+fn explain(arguments: &str, session: &Session) {
+    let selector = arguments.trim();
+    if selector.is_empty() {
+        eprintln!("Usage: explain ID|ENCODED_PATH|path:ENCODED_PATH|--all");
+        return;
+    }
+    let Some(last) = session.last_analysis.as_ref() else {
+        println!("No analysis has been completed in this session.");
+        return;
+    };
+    if matches!(last, LastAnalysis::FileInspection { .. }) {
+        eprintln!("crucksware: the latest session result has no comparison evidence");
+        return;
+    }
+    let Some(evidence) = session.evidence.as_ref() else {
+        eprintln!("crucksware: no selected comparison evidence is available");
+        return;
+    };
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    let written = match report::write_evidence_explanation(evidence, selector, &mut output) {
+        Ok(written) => written,
+        Err(error) => {
+            eprintln!("crucksware: failed to write explanation: {error}");
+            return;
+        }
+    };
+    if written == 0 {
+        eprintln!("crucksware: no selected evidence matches that ID or encoded path");
+        return;
+    }
+    if let Err(error) = output.flush() {
+        eprintln!("crucksware: failed to write explanation: {error}");
     }
 }
 
@@ -235,6 +285,7 @@ fn inspect_one(editor: &mut DefaultEditor, session: &mut Session) {
     };
     match inspection {
         Ok(inspection) => {
+            session.evidence = None;
             if let Err(error) = write_inspection_summary(&inspection, "Inspection complete.") {
                 eprintln!("crucksware: failed to write inspection: {error}");
             }
@@ -281,15 +332,12 @@ fn compare_two_files(editor: &mut DefaultEditor, session: &mut Session) {
     };
     match comparison {
         Ok(comparison) => {
-            if let Err(error) =
-                write_file_comparison_summary(&comparison, "File comparison complete.")
-            {
-                eprintln!("crucksware: failed to write comparison: {error}");
-            }
+            let evidence = select_file_comparison(&comparison);
             session.last_analysis = Some(LastAnalysis::FileComparison {
                 comparison,
                 inputs: report_inputs,
             });
+            install_evidence(session, evidence, "File comparison complete.");
         }
         Err(error) => eprintln!("crucksware: comparison failed: {error}"),
     }
@@ -341,23 +389,15 @@ fn compare_directories(editor: &mut DefaultEditor, session: &mut Session, source
     match result {
         Ok(DirectoryResult::Filesystem(diff)) => {
             let roots = report_roots(&resolved_old, &resolved_new);
+            let evidence = select_filesystem(&diff);
             session.last_analysis = Some(LastAnalysis::DirectoryComparison { diff, roots });
-            if let Some(LastAnalysis::DirectoryComparison { diff, .. }) =
-                session.last_analysis.as_ref()
-                && let Err(error) = write_summary(diff, "Analysis complete.")
-            {
-                eprintln!("crucksware: failed to write analysis summary: {error}");
-            }
+            install_evidence(session, evidence, "Analysis complete.");
         }
         Ok(DirectoryResult::SourceAware(diff)) => {
             let roots = report_roots(&resolved_old, &resolved_new);
+            let evidence = select_semantic_tree(&diff);
             session.last_analysis = Some(LastAnalysis::SourceAwareComparison { diff, roots });
-            if let Some(LastAnalysis::SourceAwareComparison { diff, .. }) =
-                session.last_analysis.as_ref()
-                && let Err(error) = write_semantic_summary(diff, "Source-aware analysis complete.")
-            {
-                eprintln!("crucksware: failed to write analysis summary: {error}");
-            }
+            install_evidence(session, evidence, "Source-aware analysis complete.");
         }
         Err(error) => eprintln!("crucksware: analysis failed: {error}"),
     }
@@ -401,6 +441,34 @@ fn prompt_path(editor: &mut DefaultEditor, prompt: &str) -> Option<PathBuf> {
             eprintln!("crucksware: could not read input path: {error}");
             None
         }
+    }
+}
+
+fn install_evidence(
+    session: &mut Session,
+    evidence: Result<EvidencePacket, EvidenceError>,
+    heading: &str,
+) {
+    match evidence {
+        Ok(evidence) => {
+            write_evidence_summary(&evidence, heading);
+            session.evidence = Some(evidence);
+        }
+        Err(error) => {
+            eprintln!("crucksware: could not prepare readable summary: {error}");
+            session.evidence = None;
+        }
+    }
+}
+
+fn write_evidence_summary(evidence: &EvidencePacket, heading: &str) {
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    let result = writeln!(output, "{heading}\n")
+        .and_then(|()| report::write_readable_summary_text(evidence, &mut output))
+        .and_then(|()| output.flush());
+    if let Err(error) = result {
+        eprintln!("crucksware: failed to write analysis summary: {error}");
     }
 }
 
@@ -520,7 +588,7 @@ fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static 
 
 fn print_help() {
     println!(
-        "Interactive commands:\n  anal         Inspect one input or compare files/directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest analysis\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
+        "Interactive commands:\n  anal         Inspect one input or compare files/directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  explain ID|ENCODED_PATH\n               Show selected evidence from the latest comparison\n  explain path:ENCODED_PATH\n               Disambiguate a path that resembles an evidence ID\n  explain --all\n               Show all selected evidence from the latest comparison\n  report       Export the latest analysis\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
     );
 }
 

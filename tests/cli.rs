@@ -108,7 +108,7 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn equal_trees_exit_zero_and_emit_only_the_default_text_report() {
+fn equal_trees_exit_zero_and_emit_readable_and_technical_text_reports() {
     let (_temporary, old, new) = roots();
     fs::write(old.join("same"), b"same contents").unwrap();
     fs::write(new.join("same"), b"same contents").unwrap();
@@ -119,17 +119,20 @@ fn equal_trees_exit_zero_and_emit_only_the_default_text_report() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         output.stdout,
-        b"Summary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=1\n"
+        b"Readable summary\nFilesystem: 0 changes across 1 entry (1 unchanged).\n\nSummary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=1\n"
     );
 }
 
 #[test]
 #[cfg(target_os = "linux")]
 fn text_output_is_deterministic_and_comparison_does_not_modify_inputs() {
+    use std::os::unix::fs::PermissionsExt;
+
     let (_temporary, old, new) = roots();
     fs::write(old.join("same"), b"same").unwrap();
     fs::write(new.join("same"), b"same").unwrap();
     fs::write(new.join("added"), b"new").unwrap();
+    fs::set_permissions(new.join("added"), fs::Permissions::from_mode(0o644)).unwrap();
     let old_before = tree_snapshot(&old);
     let new_before = tree_snapshot(&new);
 
@@ -140,8 +143,17 @@ fn text_output_is_deterministic_and_comparison_does_not_modify_inputs() {
     assert!(first.stderr.is_empty());
     assert_eq!(first.stdout, second.stdout);
     assert_eq!(
-        first.stdout,
-        b"ADDED\tadded\tkind=file\nSummary: added=1 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=1\n"
+        String::from_utf8(first.stdout.clone()).unwrap(),
+        concat!(
+            "Readable summary\n",
+            "Filesystem: 1 change across 2 entries (1 added, 1 unchanged).\n",
+            "Notable changes:\n",
+            "- `added`\n",
+            "  - E0001: added file; 3 bytes; mode ",
+            "0644.\n\n",
+            "ADDED\tadded\tkind=file\n",
+            "Summary: added=1 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=1\n"
+        )
     );
     assert_eq!(tree_snapshot(&old), old_before);
     assert_eq!(tree_snapshot(&new), new_before);
@@ -656,7 +668,7 @@ fn non_utf8_root_arguments_are_preserved() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .starts_with("Summary: added=0")
+            .starts_with("Readable summary\nNo changes were found.\n\nSummary: added=0")
     );
 }
 

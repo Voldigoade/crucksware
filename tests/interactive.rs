@@ -25,6 +25,7 @@ fn no_arguments_starts_a_shell_that_handles_help_unknown_commands_and_exit() {
     assert!(stdout.contains("Interactive commands:"));
     assert!(stdout.contains("anal"));
     assert!(stdout.contains("analyze"));
+    assert!(stdout.contains("explain"));
     assert!(!stdout.contains("\u{1b}["));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr)
@@ -82,9 +83,9 @@ fn anal_prompts_for_paths_with_spaces_and_reports_the_real_comparison() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Analysis complete."));
-    assert!(stdout.contains("1 entry compared"));
-    assert!(stdout.contains("1 change"));
-    assert!(stdout.contains("Modified: 1"));
+    assert!(stdout.contains("Readable summary"));
+    assert!(stdout.contains("Filesystem: 1 change across 1 entry (1 modified)."));
+    assert!(stdout.contains("`config%20file`"));
     assert!(output.stderr.is_empty());
     assert_eq!(std::fs::read(old.join("config file")).unwrap(), b"before");
     assert_eq!(std::fs::read(new.join("config file")).unwrap(), b"after!");
@@ -130,9 +131,9 @@ fn anal_compares_two_files_and_last_shows_byte_and_semantic_summary() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("File comparison complete."));
-    assert!(stdout.contains("Byte-level changed: yes"));
+    assert!(stdout.contains("byte-level comparison changed"));
     assert!(stdout.contains("Last file comparison."));
-    assert!(stdout.contains("Semantic status: unsupported"));
+    assert!(stdout.contains("semantic comparison: unsupported"));
     assert!(output.stderr.is_empty());
     assert_eq!(std::fs::read(old).unwrap(), b"old bytes");
     assert_eq!(std::fs::read(new).unwrap(), b"new bytes");
@@ -172,7 +173,7 @@ fn anal_compares_large_files_with_the_pair_comparison_budget() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("Byte-level changed: yes"));
+    assert!(stdout.contains("byte-level comparison changed"));
     assert!(output.stderr.is_empty());
 }
 
@@ -197,8 +198,7 @@ fn anal_can_select_source_aware_directory_comparison() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Source-aware analysis complete."));
-    assert!(stdout.contains("Source files analyzed: 1"));
-    assert!(stdout.contains("Binary files analyzed: 0"));
+    assert!(stdout.contains("Source analysis: 1 changed file"));
     assert!(stdout.contains("Last source-aware analysis."));
     assert!(output.stderr.is_empty());
     assert_eq!(
@@ -230,8 +230,7 @@ fn analyze_is_an_alias_for_anal() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Analysis complete."));
-    assert!(stdout.contains("0 entries compared"));
-    assert!(stdout.contains("0 changes"));
+    assert!(stdout.contains("No changes were found."));
     assert!(output.stderr.is_empty());
 }
 
@@ -265,13 +264,9 @@ fn analysis_summary_counts_every_change_category_and_unchanged_entry() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("6 entries compared"));
-    assert!(stdout.contains("5 changes"));
-    assert!(stdout.contains("Added: 1"));
-    assert!(stdout.contains("Removed: 1"));
-    assert!(stdout.contains("Modified: 1"));
-    assert!(stdout.contains("Type changed: 1"));
-    assert!(stdout.contains("Metadata changed: 1"));
+    assert!(stdout.contains(
+        "Filesystem: 5 changes across 6 entries (1 added, 1 removed, 1 modified, 1 type changed, 1 metadata changed, 1 unchanged)."
+    ));
     assert!(output.stderr.is_empty());
 }
 
@@ -295,9 +290,14 @@ fn last_shows_the_most_recent_successful_analysis() {
     std::fs::create_dir(&old).expect("old rootfs is created");
     std::fs::create_dir(&new).expect("new rootfs is created");
     std::fs::write(new.join("added"), b"new").expect("new file is written");
+    std::fs::set_permissions(
+        new.join("added"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o644),
+    )
+    .expect("new file mode is set");
 
     let input = format!(
-        "anal\n3\n1\n{}\n{}\nlast\nexit\n",
+        "anal\n3\n1\n{}\n{}\nlast\nexplain E0001\nexplain added\nexit\n",
         old.display(),
         new.display()
     );
@@ -307,8 +307,63 @@ fn last_shows_the_most_recent_successful_analysis() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Analysis complete."));
     assert!(stdout.contains("Last analysis."));
-    assert!(stdout.contains("1 entry compared"));
-    assert!(stdout.contains("Added: 1"));
+    assert!(stdout.contains("Filesystem: 1 change across 1 entry (1 added)."));
+    assert!(stdout.contains("Readable summary"));
+    assert!(stdout.contains("E0001"));
+    assert!(stdout.matches("added file; 3 bytes; mode 0644").count() >= 3);
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn explain_all_displays_the_complete_selected_evidence_set() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("a"), b"first").expect("first file is written");
+    std::fs::write(new.join("b"), b"second").expect("second file is written");
+
+    let input = format!(
+        "anal\n3\n1\n{}\n{}\nexplain --all\nexit\n",
+        old.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Evidence E0001\nPath: `a`"));
+    assert!(stdout.contains("Evidence E0002\nPath: `b`"));
+    assert!(stdout.contains("added file; 5 bytes"));
+    assert!(stdout.contains("added file; 6 bytes"));
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn explain_disambiguates_evidence_ids_from_id_like_paths() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("0"), b"first").expect("first file is written");
+    std::fs::write(new.join("E0001"), b"second").expect("second file is written");
+
+    let input = format!(
+        "anal\n3\n1\n{}\n{}\nexplain E0001\nexplain path:E0001\nexit\n",
+        old.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Evidence E0001\nPath: `0`"));
+    assert!(stdout.contains("Evidence E0002\nPath: `E0001`"));
+    assert_eq!(stdout.matches("Evidence E0001\n").count(), 1);
     assert!(output.stderr.is_empty());
 }
 
@@ -336,7 +391,8 @@ fn report_exports_text_and_json_to_paths_with_spaces() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let text = std::fs::read_to_string(text_path).expect("text report is written");
-    assert!(text.starts_with("ADDED\tadded\tkind=file\n"));
+    assert!(text.starts_with("Readable summary\nFilesystem: 1 change across 1 entry (1 added).\n"));
+    assert!(text.contains("ADDED\tadded\tkind=file\n"));
     assert!(text.ends_with(
         "Summary: added=1 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n"
     ));
@@ -370,7 +426,9 @@ fn report_exports_markdown_with_safe_paths_and_summary() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let markdown = std::fs::read_to_string(report_path).expect("Markdown report is written");
-    assert!(markdown.starts_with("# Crucksware report\n\n## Summary\n"));
+    assert!(markdown.starts_with(
+        "# Crucksware report\n\n## Readable summary\n\nFilesystem: 1 change across 1 entry (1 added).\n"
+    ));
     assert!(markdown.contains("`new%20%7C%20%3Cscript%3E`"));
     assert!(!markdown.contains("<script>"));
     assert!(markdown.contains("| Total changes | 1 |"));
@@ -564,11 +622,12 @@ fn report_preserves_leading_and_trailing_spaces_in_output_names() {
     let output = run_shell(input.as_bytes());
 
     assert!(output.status.success());
+    let report = std::fs::read_to_string(report_path)
+        .expect("report with whitespace in its name is written");
     assert!(
-        std::fs::read_to_string(report_path)
-            .expect("report with whitespace in its name is written")
-            .starts_with("ADDED\tadded\tkind=file\n")
+        report.starts_with("Readable summary\nFilesystem: 1 change across 1 entry (1 added).\n")
     );
+    assert!(report.contains("ADDED\tadded\tkind=file\n"));
     assert!(output.stderr.is_empty());
 }
 
@@ -674,11 +733,11 @@ fn report_overwrites_an_existing_file_after_explicit_confirmation() {
     let output = run_shell(input.as_bytes());
 
     assert!(output.status.success());
+    let report = std::fs::read_to_string(report_path).expect("confirmed report is written");
     assert!(
-        std::fs::read_to_string(report_path)
-            .expect("confirmed report is written")
-            .starts_with("ADDED\tadded\tkind=file\n")
+        report.starts_with("Readable summary\nFilesystem: 1 change across 1 entry (1 added).\n")
     );
+    assert!(report.contains("ADDED\tadded\tkind=file\n"));
     assert!(output.stderr.is_empty());
 }
 
@@ -826,7 +885,7 @@ fn failed_analysis_does_not_replace_the_last_successful_result() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Last analysis."));
-    assert!(stdout.contains("Added: 1"));
+    assert!(stdout.contains("Filesystem: 1 change across 1 entry (1 added)."));
     assert!(String::from_utf8_lossy(&output.stderr).contains("analysis failed"));
 }
 

@@ -30,10 +30,11 @@ escaped only at the output boundary.
 
 Selection uses explicit categories rather than a numeric importance score. Binary
 semantic field changes and source structural changes are considered first, followed by
-added or removed executable files, type or permission changes, bounded text line
-summaries, and ordinary additions or removals. Ties use raw path byte order and the
-existing stable field/change ordering. The selector does not read files, change the
-source analysis, or depend on hash-map iteration order.
+binary byte changes and added or removed executable files, filesystem type, mode,
+device ID, or symlink-target changes, source content-kind changes, bounded text line
+summaries, and ordinary additions or removals. Ties use raw path byte order and stable
+fact values. The selector does not read files, change the source analysis, or depend on
+hash-map iteration order.
 
 The evidence packet is capped at 64 records and 32 KiB of encoded fields. A single
 record that does not fit is omitted whole; names, paths, and signatures are never
@@ -46,9 +47,11 @@ existing bounded fact.
 
 Text, Markdown, and HTML reports place the concise summary before the detailed report.
 HTML remains a self-contained offline document. Interactive `last` shows the same
-summary, and `explain` accepts an evidence identifier or path to display selected facts
-from that session without re-running analysis. Direct comparison remains scriptable and
-emits no progress or inference diagnostics on JSON stdout.
+summary, and `explain` accepts an evidence identifier, encoded path, or `--all` to
+display selected facts from that session without re-running analysis. A path selector
+shows all selected facts for that path; `path:` forces path matching when a path
+resembles an evidence identifier. Direct comparison remains scriptable and emits no
+progress or inference diagnostics on JSON stdout.
 
 The JSON schemas continue to represent canonical structured facts. The summary is
 derived from those facts and is not serialized as an additional field in this

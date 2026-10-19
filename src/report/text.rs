@@ -4,12 +4,20 @@ use super::shared::{category_name, device_id, format_mode, kind_name, mode, syml
 use crate::{
     model::{Category, Change, ChangedField, Diff, Entry, Summary},
     path::encode_bytes,
+    readable::select_filesystem,
 };
 
 #[cfg(test)]
 mod tests;
 
 pub fn write_text(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
+    let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
+    super::readable::write_text(&packet, output)?;
+    output.write_all(b"\n")?;
+    write_text_details(diff, output)
+}
+
+pub(super) fn write_text_details(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
     for change in &diff.changes {
         write!(
             output,

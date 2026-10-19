@@ -4,13 +4,15 @@ use super::shared::{category_name, changed_field_name, validate_diff_summary};
 use crate::{
     model::{Category, ChangedField, Diff, Entry},
     path::encode_bytes,
+    readable::select_filesystem,
 };
 
 #[cfg(test)]
 mod tests;
 
 pub fn write_markdown(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
-    write_markdown_with_labels(diff, output, "Total changes", "No changes.")
+    let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
+    write_markdown_with_labels(diff, output, "Total changes", "No changes.", &packet)
 }
 
 pub(super) fn write_markdown_with_labels(
@@ -18,10 +20,13 @@ pub(super) fn write_markdown_with_labels(
     output: &mut impl Write,
     total_label: &str,
     empty_message: &str,
+    packet: &crate::readable::EvidencePacket,
 ) -> io::Result<()> {
     let total_changes = validate_diff_summary(diff)?;
 
-    output.write_all(b"# Crucksware report\n\n## Summary\n\n")?;
+    output.write_all(b"# Crucksware report\n\n")?;
+    super::readable::write_markdown(packet, output)?;
+    output.write_all(b"\n## Summary\n\n")?;
     output.write_all(b"| Category | Count |\n|:--|--:|\n")?;
     writeln!(output, "| Added | {} |", diff.summary.added)?;
     writeln!(output, "| Removed | {} |", diff.summary.removed)?;

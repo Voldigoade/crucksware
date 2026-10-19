@@ -4,6 +4,7 @@ use super::shared::{category_name, changed_field_name, validate_diff_summary};
 use crate::{
     model::{Category, ChangedField, Diff, Entry},
     path::encode_bytes,
+    readable::select_filesystem,
     semantic_tree::{BinaryFileChange, SemanticTreeDiff},
     source::{SourceFileChange, StructuralChange},
 };
@@ -60,6 +61,7 @@ mod tests;
 
 pub fn write_html(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
     let total_changes = validate_diff_summary(diff)?;
+    let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
 
     output.write_all(
         b"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Crucksware report</title>\n<style>",
@@ -68,6 +70,7 @@ pub fn write_html(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
     output.write_all(
         b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n",
     )?;
+    super::readable::write_html(&packet, output)?;
     write_summary(diff, total_changes, output)?;
     output.write_all(
         b"<section aria-labelledby=\"changes-heading\">\n<h2 id=\"changes-heading\">Changes</h2>\n",
@@ -94,6 +97,8 @@ pub fn write_semantic_tree_html(
     output: &mut impl Write,
 ) -> io::Result<()> {
     let total_changes = validate_diff_summary(&diff.filesystem)?;
+    let packet =
+        crate::readable::select_semantic_tree(diff).map_err(super::readable::selection_error)?;
     let has_changes = !diff.filesystem.changes.is_empty()
         || !diff.source_changes.is_empty()
         || !diff.binary_changes.is_empty();
@@ -105,6 +110,7 @@ pub fn write_semantic_tree_html(
     output.write_all(
         b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n",
     )?;
+    super::readable::write_html(&packet, output)?;
     write_summary_with_total_label(
         &diff.filesystem,
         total_changes,

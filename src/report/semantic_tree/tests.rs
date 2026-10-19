@@ -83,14 +83,15 @@ fn source_text_report_encodes_paths_and_quotes_structural_values() {
 
     write_text(&diff, &mut output).unwrap();
 
-    assert_eq!(
-        String::from_utf8(output).unwrap(),
-        concat!(
-            "Summary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n",
-            "SOURCE\tsrc/a%09b.rs\tlines_added=1,lines_removed=1,hunks=1\tlanguage=rust\tstructural_status=complete\n",
-            "STRUCTURE\tsignature_changed\tfunction\t\"login\"\tbefore=\"fn login\"\tafter=\"fn login ( otp )\"\n",
-        )
-    );
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.starts_with(
+        "Readable summary\nSource analysis: 1 changed file, 1 structural change.\nNotable changes:\n- `src/a%09b.rs`\n  - E0001: function \"login\" signature changed from \"fn login\" to \"fn login ( otp )\".\n  - E0002: text changed (+1 lines, -1 lines across 1 hunk).\n\n"
+    ));
+    assert!(output.ends_with(concat!(
+        "Summary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n",
+        "SOURCE\tsrc/a%09b.rs\tlines_added=1,lines_removed=1,hunks=1\tlanguage=rust\tstructural_status=complete\n",
+        "STRUCTURE\tsignature_changed\tfunction\t\"login\"\tbefore=\"fn login\"\tafter=\"fn login ( otp )\"\n",
+    )));
 }
 
 #[test]
@@ -185,14 +186,15 @@ fn semantic_tree_text_reports_binary_format_and_fact_changes() {
 
     write_text(&diff, &mut output).unwrap();
 
-    assert_eq!(
-        String::from_utf8(output).unwrap(),
-        concat!(
-            "Summary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n",
-            "BINARY\tbin/tool\told_kind=elf\tnew_kind=elf\told_size_bytes=64\tnew_size_bytes=64\tbyte_level_changed=true\tsemantic_status=compared\n",
-            "BINARY_SEMANTIC\tbin/tool\t\"entry_point\"\tbefore=4096\tafter=8192\n",
-        )
-    );
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.starts_with(
+        "Readable summary\nBinary analysis: 1 input, 1 semantic field change.\nNotable changes:\n- `bin/tool`\n  - E0001: binary field \"entry_point\" changed from 4096 to 8192.\n  - E0002: byte-level comparison changed; elf (64 bytes) to elf (64 bytes); semantic comparison: compared.\n\n"
+    ));
+    assert!(output.ends_with(concat!(
+        "Summary: added=0 removed=0 modified=0 type_changed=0 metadata_changed=0 unchanged=0\n",
+        "BINARY\tbin/tool\told_kind=elf\tnew_kind=elf\told_size_bytes=64\tnew_size_bytes=64\tbyte_level_changed=true\tsemantic_status=compared\n",
+        "BINARY_SEMANTIC\tbin/tool\t\"entry_point\"\tbefore=4096\tafter=8192\n",
+    )));
 }
 
 #[test]
@@ -235,34 +237,34 @@ fn semantic_tree_markdown_is_deterministic_and_escapes_untrusted_values() {
     write_markdown(&diff, &mut output).unwrap();
     let markdown = String::from_utf8(output.clone()).unwrap();
 
-    assert_eq!(
-        markdown,
-        concat!(
-            "# Crucksware report\n\n",
-            "## Summary\n\n",
-            "| Category | Count |\n|:--|--:|\n",
-            "| Added | 0 |\n| Removed | 0 |\n| Modified | 0 |\n",
-            "| Type changed | 0 |\n| Metadata changed | 0 |\n",
-            "| Total filesystem changes | 0 |\n| Unchanged | 0 |\n\n",
-            "## Changes\n\nNo filesystem changes.\n\n",
-            "## Source analysis\n\n",
-            "| Path | Status | Language | Lines added | Lines removed | Hunks | Structural status |\n",
-            "|:--|:--|:--|--:|--:|--:|:--|\n",
-            "| `src/a%7Cb.rs` | compared | rust | 1 | 2 | 1 | complete |\n\n",
-            "### Structural changes\n\n",
-            "| Path | Action | Kind | Name | Before signature | After signature |\n",
-            "|:--|:--|:--|:--|:--|:--|\n",
-            "| `src/a%7Cb.rs` | signature_changed | function | &lt;script&gt;\\|login\\u{1} | ",
-            "fn login \\| old | fn login \\| new |\n\n",
-            "## Binary analysis\n\n",
-            "| Path | Old kind | New kind | Old size bytes | New size bytes | Byte-level changed | Semantic status |\n",
-            "|:--|:--|:--|--:|--:|:--|:--|\n",
-            "| `bin/tool` | elf | elf | 12 | 13 | true | compared |\n\n",
-            "### Binary semantic changes\n\n",
-            "| Path | Field | Before | After |\n|:--|:--|:--|:--|\n",
-            "| `bin/tool` | entry\\|point | &quot;&lt;old&gt;&quot; | &quot;&lt;new&gt;&quot; |\n",
-        )
+    let expected = concat!(
+        "# Crucksware report\n\n",
+        "## Summary\n\n",
+        "| Category | Count |\n|:--|--:|\n",
+        "| Added | 0 |\n| Removed | 0 |\n| Modified | 0 |\n",
+        "| Type changed | 0 |\n| Metadata changed | 0 |\n",
+        "| Total filesystem changes | 0 |\n| Unchanged | 0 |\n\n",
+        "## Changes\n\nNo filesystem changes.\n\n",
+        "## Source analysis\n\n",
+        "| Path | Status | Language | Lines added | Lines removed | Hunks | Structural status |\n",
+        "|:--|:--|:--|--:|--:|--:|:--|\n",
+        "| `src/a%7Cb.rs` | compared | rust | 1 | 2 | 1 | complete |\n\n",
+        "### Structural changes\n\n",
+        "| Path | Action | Kind | Name | Before signature | After signature |\n",
+        "|:--|:--|:--|:--|:--|:--|\n",
+        "| `src/a%7Cb.rs` | signature_changed | function | &lt;script&gt;\\|login\\u{1} | ",
+        "fn login \\| old | fn login \\| new |\n\n",
+        "## Binary analysis\n\n",
+        "| Path | Old kind | New kind | Old size bytes | New size bytes | Byte-level changed | Semantic status |\n",
+        "|:--|:--|:--|--:|--:|:--|:--|\n",
+        "| `bin/tool` | elf | elf | 12 | 13 | true | compared |\n\n",
+        "### Binary semantic changes\n\n",
+        "| Path | Field | Before | After |\n|:--|:--|:--|:--|\n",
+        "| `bin/tool` | entry\\|point | &quot;&lt;old&gt;&quot; | &quot;&lt;new&gt;&quot; |\n",
     );
+    assert!(markdown.starts_with("# Crucksware report\n\n## Readable summary\n\n"));
+    assert!(markdown.contains("- `bin/tool`\n  - **E0001**"));
+    assert!(markdown.ends_with(expected.strip_prefix("# Crucksware report\n\n").unwrap()));
     assert!(!markdown.contains("<script>"));
 
     let mut repeated = Vec::new();

@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::{
     binary_compare::SemanticChange,
     path::encode_bytes,
+    readable::select_semantic_tree,
     report::{json, text},
     semantic_tree::{BinaryAnalysisStatus, BinaryFileChange, SemanticTreeDiff},
     source::{SourceAnalysisStatus, SourceFileChange, StructuralChange, StructuralStatus},
@@ -14,7 +15,10 @@ use crate::{
 mod tests;
 
 pub fn write_text(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
-    text::write_text(&diff.filesystem, output)?;
+    let packet = select_semantic_tree(diff).map_err(super::readable::selection_error)?;
+    super::readable::write_text(&packet, output)?;
+    output.write_all(b"\n")?;
+    text::write_text_details(&diff.filesystem, output)?;
     for change in &diff.source_changes {
         write!(output, "SOURCE\t{}\t", encode_bytes(change.path.as_bytes()))?;
         match (change.lines_added, change.lines_removed, change.hunk_count) {
@@ -65,11 +69,13 @@ pub fn write_text(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Resul
 }
 
 pub fn write_markdown(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
+    let packet = select_semantic_tree(diff).map_err(super::readable::selection_error)?;
     super::markdown::write_markdown_with_labels(
         &diff.filesystem,
         output,
         "Total filesystem changes",
         "No filesystem changes.",
+        &packet,
     )?;
     if !diff.source_changes.is_empty() {
         output.write_all(b"\n## Source analysis\n\n")?;

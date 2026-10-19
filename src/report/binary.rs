@@ -5,10 +5,14 @@ use serde_json::{Map, Value, json};
 use crate::{
     binary_compare::{FileComparison, SemanticComparisonStatus},
     input::InputKind,
+    readable::select_file_comparison,
     report::{html, semantic_tree::write_markdown_cell},
 };
 
 pub fn write_text(comparison: &FileComparison, output: &mut impl Write) -> io::Result<()> {
+    let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
+    super::readable::write_text(&packet, output)?;
+    output.write_all(b"\n")?;
     writeln!(output, "Binary comparison")?;
     writeln!(
         output,
@@ -93,7 +97,10 @@ pub fn write_json(comparison: &FileComparison, output: &mut impl Write) -> io::R
 }
 
 pub fn write_markdown(comparison: &FileComparison, output: &mut impl Write) -> io::Result<()> {
-    output.write_all(b"# Crucksware report\n\n## Summary\n\n| Field | Value |\n|:--|:--|\n")?;
+    let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
+    output.write_all(b"# Crucksware report\n\n")?;
+    super::readable::write_markdown(&packet, output)?;
+    output.write_all(b"\n## Summary\n\n| Field | Value |\n|:--|:--|\n")?;
     writeln!(output, "| Old kind | {} |", comparison.old_kind)?;
     writeln!(output, "| New kind | {} |", comparison.new_kind)?;
     writeln!(output, "| Old size bytes | {} |", comparison.old_size_bytes)?;
@@ -132,11 +139,18 @@ pub fn write_markdown(comparison: &FileComparison, output: &mut impl Write) -> i
 }
 
 pub fn write_html(comparison: &FileComparison, output: &mut impl Write) -> io::Result<()> {
+    let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
     output.write_all(
         b"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Crucksware report</title>\n<style>",
     )?;
     output.write_all(html::STYLE.as_bytes())?;
-    output.write_all(b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n<section aria-labelledby=\"summary-heading\">\n<h2 id=\"summary-heading\">Binary comparison</h2>\n<table class=\"summary\">\n<tbody>\n")?;
+    output.write_all(
+        b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n",
+    )?;
+    super::readable::write_html(&packet, output)?;
+    output.write_all(
+        b"<section aria-labelledby=\"summary-heading\">\n<h2 id=\"summary-heading\">Binary comparison</h2>\n<table class=\"summary\">\n<tbody>\n",
+    )?;
     write_html_row(output, "Old kind", kind_name(comparison.old_kind))?;
     write_html_row(output, "New kind", kind_name(comparison.new_kind))?;
     write_html_row(
