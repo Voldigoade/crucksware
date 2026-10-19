@@ -7,10 +7,12 @@ use std::{
 
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator};
 
-use super::{SourceLanguage, StructuralAction, StructuralChange, StructuralKind, StructuralStatus};
+use super::{
+    MAX_SOURCE_FACT_BYTES, MAX_SOURCE_RECORDS, SourceLanguage, StructuralAction, StructuralChange,
+    StructuralKind, StructuralStatus,
+};
 use crate::{error::DiffError, path::RelPath};
 
-const MAX_SOURCE_RECORDS: u64 = 50_000;
 const MAX_SOURCE_NODES: usize = 500_000;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -34,6 +36,7 @@ pub(super) fn language_for_path(path: &Path) -> Option<SourceLanguage> {
 pub(super) struct Analyzer {
     parsers: BTreeMap<SourceLanguage, Parser>,
     queries: BTreeMap<SourceLanguage, Query>,
+    fact_bytes: u64,
 }
 
 impl Analyzer {
@@ -41,6 +44,7 @@ impl Analyzer {
         Self {
             parsers: BTreeMap::new(),
             queries: BTreeMap::new(),
+            fact_bytes: 0,
         }
     }
 
@@ -61,8 +65,10 @@ impl Analyzer {
             .queries
             .get(&language)
             .ok_or_else(|| source_error(display_path, "parser query is unavailable".to_owned()))?;
-        let (old_has_errors, old_facts) = parse(parser, query, language, old, path)?;
-        let (new_has_errors, new_facts) = parse(parser, query, language, new, path)?;
+        let (old_has_errors, old_facts) =
+            parse(parser, query, language, old, path, &mut self.fact_bytes)?;
+        let (new_has_errors, new_facts) =
+            parse(parser, query, language, new, path, &mut self.fact_bytes)?;
         if old_has_errors || new_has_errors {
             return Ok((StructuralStatus::SyntaxErrors, Vec::new()));
         }
@@ -96,18 +102,27 @@ fn parse(
     language: SourceLanguage,
     source: &str,
     path: &RelPath,
-) -> Result<(bool, BTreeSet<Fact>), DiffError> {
+    fact_bytes: &mut u64,
+) -> Result<(bool, BTreeMap<Fact, usize>), DiffError> {
     let display_path = Path::new(OsStr::from_bytes(path.as_bytes())).to_path_buf();
     let tree = parser
         .parse(source.as_bytes(), None)
         .ok_or_else(|| source_error(&display_path, "parser did not complete".to_owned()))?;
     let root = tree.root_node();
     if root.has_error() {
-        return Ok((true, BTreeSet::new()));
+        return Ok((true, BTreeMap::new()));
     }
 
-    let mut facts = BTreeSet::new();
-    collect_imports_and_unions(language, root, source, &mut facts)?;
+    let mut facts = BTreeMap::new();
+    let mut record_count = 0;
+    collect_imports_and_unions(
+        language,
+        root,
+        source,
+        &mut facts,
+        &mut record_count,
+        fact_bytes,
+    )?;
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, root, source.as_bytes());
     while let Some(query_match) = matches.next() {
@@ -143,14 +158,18 @@ fn parse(
         if matches!(kind, StructuralKind::Function) && is_member(language, definition_node) {
             kind = StructuralKind::Method;
         }
-        facts.insert(Fact {
-            kind,
-            name: qualified_name,
-            signature: (matches!(kind, StructuralKind::Function | StructuralKind::Method))
-                .then(|| signature(definition_node, source))
-                .flatten(),
-        });
-        check_record_count(facts.len())?;
+        insert_fact(
+            &mut facts,
+            &mut record_count,
+            fact_bytes,
+            Fact {
+                kind,
+                name: qualified_name,
+                signature: (matches!(kind, StructuralKind::Function | StructuralKind::Method))
+                    .then(|| signature(definition_node, source))
+                    .flatten(),
+            },
+        )?;
     }
     Ok((false, facts))
 }
@@ -349,7 +368,9 @@ fn collect_imports_and_unions(
     language: SourceLanguage,
     root: Node<'_>,
     source: &str,
-    facts: &mut BTreeSet<Fact>,
+    facts: &mut BTreeMap<Fact, usize>,
+    record_count: &mut usize,
+    fact_bytes: &mut u64,
 ) -> Result<(), DiffError> {
     let mut pending = vec![root];
     let mut visited = 0_usize;
@@ -363,24 +384,32 @@ fn collect_imports_and_unions(
         if is_import(language, node.kind()) {
             let import = normalized_tokens(node, source, node.end_byte())
                 .unwrap_or_else(|| source[node.start_byte()..node.end_byte()].to_owned());
-            facts.insert(Fact {
-                kind: StructuralKind::Import,
-                name: import,
-                signature: None,
-            });
-            check_record_count(facts.len())?;
+            insert_fact(
+                facts,
+                record_count,
+                fact_bytes,
+                Fact {
+                    kind: StructuralKind::Import,
+                    name: import,
+                    signature: None,
+                },
+            )?;
         }
         if matches!(language, SourceLanguage::C | SourceLanguage::Cpp)
             && node.kind() == "union_specifier"
             && let Some(name) = node.child_by_field_name("name")
             && let Some(name) = node_text(name, source)
         {
-            facts.insert(Fact {
-                kind: StructuralKind::Union,
-                name,
-                signature: None,
-            });
-            check_record_count(facts.len())?;
+            insert_fact(
+                facts,
+                record_count,
+                fact_bytes,
+                Fact {
+                    kind: StructuralKind::Union,
+                    name,
+                    signature: None,
+                },
+            )?;
         }
         for index in (0..node.child_count()).rev() {
             if let Some(child) = node.child(index) {
@@ -399,7 +428,7 @@ fn is_import(language: SourceLanguage, kind: &str) -> bool {
     }
 }
 
-fn compare_facts(old: BTreeSet<Fact>, new: BTreeSet<Fact>) -> Vec<StructuralChange> {
+fn compare_facts(old: BTreeMap<Fact, usize>, new: BTreeMap<Fact, usize>) -> Vec<StructuralChange> {
     let mut old_groups = group_facts(old);
     let mut new_groups = group_facts(new);
     let mut keys: BTreeSet<_> = old_groups.keys().cloned().collect();
@@ -466,13 +495,17 @@ fn compare_facts(old: BTreeSet<Fact>, new: BTreeSet<Fact>) -> Vec<StructuralChan
     changes
 }
 
-fn group_facts(facts: BTreeSet<Fact>) -> BTreeMap<(StructuralKind, String), Vec<Option<String>>> {
+fn group_facts(
+    facts: BTreeMap<Fact, usize>,
+) -> BTreeMap<(StructuralKind, String), Vec<Option<String>>> {
     let mut groups = BTreeMap::new();
-    for fact in facts {
-        groups
+    for (fact, count) in facts {
+        let signatures = groups
             .entry((fact.kind, fact.name))
-            .or_insert_with(Vec::new)
-            .push(fact.signature);
+            .or_insert_with(Vec::new);
+        for _ in 0..count {
+            signatures.push(fact.signature.clone());
+        }
     }
     for signatures in groups.values_mut() {
         signatures.sort();
@@ -487,15 +520,52 @@ fn check_record_count(count: usize) -> Result<(), DiffError> {
     Ok(())
 }
 
+fn insert_fact(
+    facts: &mut BTreeMap<Fact, usize>,
+    record_count: &mut usize,
+    fact_bytes: &mut u64,
+    fact: Fact,
+) -> Result<(), DiffError> {
+    // Charge duplicate facts because comparison expands them into separate output rows.
+    let signature_bytes = fact.signature.as_ref().map_or(0, String::len);
+    let byte_count = fact
+        .name
+        .len()
+        .checked_add(signature_bytes)
+        .and_then(|count| u64::try_from(count).ok())
+        .ok_or_else(|| limit_error(ResourceLimit::FactBytes))?;
+    let next_fact_bytes = fact_bytes
+        .checked_add(byte_count)
+        .filter(|bytes| *bytes <= MAX_SOURCE_FACT_BYTES)
+        .ok_or_else(|| limit_error(ResourceLimit::FactBytes))?;
+    let next_record_count = record_count
+        .checked_add(1)
+        .ok_or_else(|| limit_error(ResourceLimit::Records))?;
+    check_record_count(next_record_count)?;
+
+    let count = facts.entry(fact).or_default();
+    *count = count
+        .checked_add(1)
+        .ok_or_else(|| limit_error(ResourceLimit::Records))?;
+    *record_count = next_record_count;
+    *fact_bytes = next_fact_bytes;
+    Ok(())
+}
+
 enum ResourceLimit {
     Nodes,
     Records,
+    FactBytes,
 }
 
 fn limit_error(resource: ResourceLimit) -> DiffError {
     let (resource, limit) = match resource {
         ResourceLimit::Nodes => (crate::error::Resource::SourceNodes, MAX_SOURCE_NODES as u64),
         ResourceLimit::Records => (crate::error::Resource::SourceRecords, MAX_SOURCE_RECORDS),
+        ResourceLimit::FactBytes => (
+            crate::error::Resource::SourceFactBytes,
+            MAX_SOURCE_FACT_BYTES,
+        ),
     };
     DiffError::LimitExceeded { resource, limit }
 }

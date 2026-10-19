@@ -87,11 +87,13 @@ checks it against the inventory stamp before and after reading. It shares the di
 comparison byte budget. A text file is bounded to 8 MiB by default and 64 MiB maximum;
 each side also contributes to the existing total byte-read limit. Text diffs are limited
 to 200,000 lines per side. After Tree-sitter has built a complete syntax tree, fact
-extraction visits at most 500,000 nodes and retains at most 50,000 facts per file.
-Exceeding these limits fails the comparison before any report is written. The node limit
-does not bound Tree-sitter's parse-time CPU or memory use. Parsing is limited by the
-source-file byte cap, but a file near the configured maximum can still require substantial
-resources. Keep the default 8 MiB cap when analyzing untrusted source trees.
+extraction visits at most 500,000 nodes and retains at most 50,000 facts per parsed
+version. Across a complete comparison, source reports are limited to 50,000 records and
+16 MiB of copied fact text, including qualified names and signatures. Exceeding these
+limits fails the comparison before any report is written. The node limit does not bound
+Tree-sitter's parse-time CPU or memory use. Parsing is limited by the source-file byte cap,
+but a file near the configured maximum can still require substantial resources. Keep the
+default 8 MiB cap when analyzing untrusted source trees.
 
 The initial structural languages are Rust, C, C++, and Python. Extensions are parser
 hints only. Changed text with an unsupported extension still receives a deterministic
@@ -102,8 +104,9 @@ The source pass requires the full file to be valid UTF-8. Generic input detectio
 only a bounded sample, so a large file with invalid bytes after that sample can receive a
 different text classification in the generic and source-aware result sections.
 Structural facts include definitions, normalized function or method signatures, and
-imports. Ordering is normalized for deterministic output. These facts do not describe
-control flow, runtime behavior, intent, or behavioral equivalence.
+imports, including repeated occurrences. Ordering is normalized for deterministic output.
+These facts do not describe control flow, runtime behavior, intent, or behavioral
+equivalence.
 
 Changed files that classify as text receive the bounded line and structural analysis
 described above. Changed ELF and PE files use the same inspection and normalized-fact

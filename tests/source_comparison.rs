@@ -706,3 +706,60 @@ fn source_mode_rejects_a_text_file_above_its_configured_limit_without_partial_ou
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("source file byte limit"));
 }
+
+#[test]
+fn source_mode_bounds_structural_records_across_the_complete_tree() {
+    let (_temporary, old, new) = roots();
+    let declarations = (0..25_001)
+        .map(|index| format!("fn item_{index}() {{}}\n"))
+        .collect::<String>();
+    fs::write(new.join("first.rs"), &declarations).unwrap();
+    fs::write(new.join("second.rs"), declarations).unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source record limit exceeded"));
+}
+
+#[test]
+fn source_mode_bounds_copied_facts_across_files_with_long_qualified_names() {
+    let (_temporary, old, new) = roots();
+    let scope = "a".repeat(2_048);
+    let mut declarations = String::new();
+    for index in 0..4_100 {
+        declarations.push_str(&format!("fn item_{index}() {{}}\n"));
+    }
+    let source = format!("mod {scope} {{\n{declarations}}}\n");
+    fs::write(new.join("lib_a.rs"), &source).unwrap();
+    fs::write(new.join("lib_b.rs"), source).unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source fact byte limit exceeded"));
+}
+
+#[test]
+fn source_mode_preserves_repeated_import_occurrences() {
+    let (_temporary, old, new) = roots();
+    fs::write(old.join("main.c"), "#include <stdio.h>\n").unwrap();
+    fs::write(
+        new.join("main.c"),
+        "#include <stdio.h>\n#include <stdio.h>\n",
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let structural_changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(structural_changes.len(), 1);
+    assert_eq!(structural_changes[0]["action"], "added");
+    assert_eq!(structural_changes[0]["kind"], "import");
+}
