@@ -91,3 +91,19 @@ described above. No crash, timeout, sanitizer finding, or crash artifact occurre
 The inspection counter came from libFuzzer's final `Done` line. Final statistics were
 enabled for the comparison and source-analysis runs. The runs tested this build and seed
 corpus only; they do not prove parser safety or establish a universal resource bound.
+
+## PE resource-name fix requalification
+
+After strict UTF-16 validation was added for PE resource names, the `inspect_file` and
+`compare_files` targets were rerun against commit `bd94f78`. Each campaign ran for 60
+seconds with the tracked synthetic seeds copied to `/tmp`, a two-second per-input timeout,
+a 1 MiB maximum input size, and AddressSanitizer. Leak detection remained disabled because
+the container does not permit LeakSanitizer's required ptrace access.
+
+| Target | Executions | Average executions/s | New corpus units | Peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| `inspect_file` | 1,245,914 | 20,424 | 1,490 | 508 MiB |
+| `compare_files` | 597,945 | 9,802 | 1,502 | 460 MiB |
+
+Neither campaign reported a crash, timeout, AddressSanitizer finding, or crash artifact.
+These runs cover the tested build and seeds only and do not prove parser safety.
