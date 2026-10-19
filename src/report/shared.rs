@@ -1,4 +1,41 @@
-use crate::model::{Category, ChangedField, Entry, EntryKind};
+use std::io;
+
+use crate::model::{Category, ChangedField, Diff, Entry, EntryKind};
+
+pub(super) fn validate_diff_summary(diff: &Diff) -> io::Result<u64> {
+    let mut actual = [0_u64; 5];
+    for change in &diff.changes {
+        let index = match change.category {
+            Category::Added => 0,
+            Category::Removed => 1,
+            Category::Modified => 2,
+            Category::TypeChanged => 3,
+            Category::MetadataChanged => 4,
+        };
+        actual[index] = actual[index]
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "change count overflowed"))?;
+    }
+
+    let summary = &diff.summary;
+    let expected = [
+        summary.added,
+        summary.removed,
+        summary.modified,
+        summary.type_changed,
+        summary.metadata_changed,
+    ];
+    if actual != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "summary counts do not match changes",
+        ));
+    }
+    expected
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "change count overflowed"))
+}
 
 pub(super) fn category_name(category: Category) -> &'static str {
     match category {
