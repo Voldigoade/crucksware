@@ -201,6 +201,67 @@ fn reports_imports_delay_imports_exports_and_resource_metadata() {
     assert!(output.contains("Resource 10/1/1033: RVA=0x11d0 size=4 code-page=1200"));
 }
 
+#[test]
+fn deterministic_pe_mutations_never_panic() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("mutated-pe");
+    let seeds = [pe_image(true, None), pe_with_tables(), pe_with_codeview()];
+    let mut state = 0x0ddc_0ffe_e15e_beef_u64;
+
+    for (seed_index, seed) in seeds.iter().enumerate() {
+        let mutable_offsets: Vec<_> = (4..seed.len())
+            .filter(|offset| !(0x3c..0x40).contains(offset) && !(0x80..0x84).contains(offset))
+            .collect();
+        for mutation_index in 0..64 {
+            let mut bytes = seed.clone();
+            for _ in 0..1 + mutation_index % 4 {
+                let offset =
+                    mutable_offsets[next_random(&mut state) as usize % mutable_offsets.len()];
+                bytes[offset] = next_random(&mut state) as u8;
+            }
+            fs::write(&path, bytes).unwrap();
+
+            let outcome = std::panic::catch_unwind(|| inspect_file(&path, DEFAULT_MAX_BYTES_READ));
+
+            assert!(
+                outcome.is_ok(),
+                "PE parser panicked for seed {seed_index}, mutation {mutation_index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn overlapping_pe_section_ranges_do_not_panic() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("overlapping-sections");
+    let mut bytes = pe_image(true, None);
+    bytes[0x86..0x88].copy_from_slice(&2_u16.to_le_bytes());
+    bytes[0x98 + 56..0x98 + 60].copy_from_slice(&0x3000_u32.to_le_bytes());
+    let second_section = 0x98 + 240 + 40;
+    bytes[second_section..second_section + 6].copy_from_slice(b".other");
+    bytes[second_section + 8..second_section + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+    bytes[second_section + 12..second_section + 16].copy_from_slice(&0x2000_u32.to_le_bytes());
+    bytes[second_section + 16..second_section + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+    bytes[second_section + 20..second_section + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+    bytes[second_section + 36..second_section + 40].copy_from_slice(&0x40000040_u32.to_le_bytes());
+    fs::write(&path, bytes).unwrap();
+
+    let outcome = std::panic::catch_unwind(|| inspect_file(&path, DEFAULT_MAX_BYTES_READ));
+
+    assert!(
+        outcome.is_ok(),
+        "PE parser panicked on overlapping section data"
+    );
+}
+
+fn next_random(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
 fn pe_image(is_64: bool, certificate: Option<(u32, u32)>) -> Vec<u8> {
     pe_image_at(is_64, certificate, 0x80)
 }

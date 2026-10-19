@@ -94,3 +94,41 @@ fn inspects_files_with_non_utf8_paths() {
     assert_eq!(inspection.kind, InputKind::Text);
     assert_eq!(inspection.size_bytes, 5);
 }
+
+#[test]
+fn deterministic_unrecognized_binary_inputs_do_not_panic() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("random-input");
+    let mut state = 0x6a09_e667_f3bc_c909_u64;
+
+    for sample in 0..256 {
+        let length = sample * 17 % 2_049;
+        let mut bytes = Vec::with_capacity(length);
+        while bytes.len() < length {
+            bytes.extend_from_slice(&next_random(&mut state).to_le_bytes());
+        }
+        bytes.truncate(length);
+        if bytes.starts_with(b"\x7fELF") || bytes.starts_with(b"MZ") {
+            bytes[0] = b'X';
+        }
+        fs::write(&path, &bytes).unwrap();
+
+        let outcome = std::panic::catch_unwind(|| inspect_file(&path, DEFAULT_MAX_BYTES_READ));
+        let inspection = outcome
+            .unwrap_or_else(|_| panic!("inspection panicked for sample {sample}"))
+            .unwrap();
+
+        assert!(matches!(
+            inspection.kind,
+            InputKind::Text | InputKind::UnknownBinary
+        ));
+        assert_eq!(inspection.size_bytes, length as u64);
+    }
+}
+
+fn next_random(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
