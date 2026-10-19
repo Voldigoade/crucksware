@@ -7,6 +7,8 @@ use std::{
 
 use tempfile::TempDir;
 
+mod common;
+
 fn binary() -> Command {
     Command::new(env!("CARGO_BIN_EXE_crucksware"))
 }
@@ -163,6 +165,126 @@ fn json_output_is_complete_and_stdout_contains_no_diagnostics() {
     assert_eq!(report["summary"]["added"], 1);
     assert_eq!(report["changes"][0]["path"], "added");
     assert_eq!(report["changes"][0]["category"], "ADDED");
+}
+
+#[test]
+fn compare_dispatches_file_pairs_to_binary_json_reports() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old.bin");
+    let new = temporary.path().join("new.bin");
+    fs::write(&old, b"\0old").unwrap();
+    fs::write(&new, b"\0new").unwrap();
+
+    let output = run_compare(&old, &new, &["--format=json"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["analysis_type"], "file_comparison");
+    assert_eq!(report["old_kind"], "unknown binary");
+    assert_eq!(report["new_kind"], "unknown binary");
+    assert_eq!(report["byte_level_changed"], true);
+    assert_eq!(report["semantic_status"], "unsupported");
+}
+
+#[test]
+fn compare_dispatches_file_pairs_to_the_text_report_and_exit_code() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old.txt");
+    let new = temporary.path().join("new.txt");
+    fs::write(&old, b"same").unwrap();
+    fs::write(&new, b"same").unwrap();
+
+    let output = run_compare(&old, &new, &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let report = String::from_utf8(output.stdout).unwrap();
+    assert!(report.contains("Byte-level changed: no"));
+    assert!(report.contains("Semantic comparison: unsupported"));
+}
+
+#[test]
+fn compare_rejects_mixed_directory_and_file_inputs_without_a_report() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old-root");
+    let new = temporary.path().join("new-file");
+    fs::create_dir(&old).unwrap();
+    fs::write(&new, b"bytes").unwrap();
+
+    let output = run_compare(&old, &new, &[]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("two directories or two regular files")
+    );
+}
+
+#[test]
+fn compare_reports_elf_semantic_changes_separately_from_bytes() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old-elf");
+    let new = temporary.path().join("new-elf");
+    fs::write(&old, common::minimal_elf64(0x401000)).unwrap();
+    fs::write(&new, common::minimal_elf64(0x402000)).unwrap();
+
+    let output = run_compare(&old, &new, &["--format=json"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["old_kind"], "ELF");
+    assert_eq!(report["byte_level_changed"], true);
+    assert_eq!(report["semantic_status"], "compared");
+    assert_eq!(report["semantic_changes"][0]["field"], "entry_point");
+    assert_eq!(report["semantic_changes"][0]["before"], 0x401000_u64);
+    assert_eq!(report["semantic_changes"][0]["after"], 0x402000_u64);
+}
+
+#[test]
+fn compare_reports_known_format_mismatches_explicitly() {
+    let temporary = tempfile::tempdir().unwrap();
+    let elf = temporary.path().join("program-elf");
+    let pe = temporary.path().join("program-pe");
+    fs::write(&elf, common::minimal_elf64(0x401000)).unwrap();
+    fs::write(&pe, common::minimal_pe64(0x1000)).unwrap();
+
+    let output = run_compare(&elf, &pe, &["--format=json"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["old_kind"], "ELF");
+    assert_eq!(report["new_kind"], "PE");
+    assert_eq!(report["semantic_status"], "format_mismatch");
+    assert!(report["semantic_changes"].as_array().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn compare_preserves_non_utf8_file_arguments() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join(OsStr::from_bytes(b"old-\xff"));
+    let new = temporary.path().join(OsStr::from_bytes(b"new-\xfe"));
+    fs::write(&old, b"\0same").unwrap();
+    fs::write(&new, b"\0same").unwrap();
+
+    let output = run_compare(&old, &new, &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("Byte-level changed: no")
+    );
 }
 
 #[test]

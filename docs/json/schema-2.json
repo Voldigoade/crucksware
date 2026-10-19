@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Voldigoade/crucksware/blob/main/docs/json/schema-2.json",
+  "title": "Crucksware file comparison report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "analysis_type",
+    "old_kind",
+    "new_kind",
+    "old_size_bytes",
+    "new_size_bytes",
+    "byte_level_changed",
+    "semantic_status",
+    "semantic_changes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "analysis_type": {
+      "const": "file_comparison"
+    },
+    "old_kind": {
+      "enum": ["ELF", "PE", "text", "unknown binary"]
+    },
+    "new_kind": {
+      "enum": ["ELF", "PE", "text", "unknown binary"]
+    },
+    "old_size_bytes": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "new_size_bytes": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "byte_level_changed": {
+      "type": "boolean"
+    },
+    "semantic_status": {
+      "enum": ["compared", "format_mismatch", "unsupported"]
+    },
+    "semantic_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "before", "after"],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "before": {
+            "type": ["array", "boolean", "null", "number", "object", "string"]
+          },
+          "after": {
+            "type": ["array", "boolean", "null", "number", "object", "string"]
+          }
+        }
+      }
+    }
+  }
+}

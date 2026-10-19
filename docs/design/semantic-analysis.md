@@ -14,8 +14,8 @@ checks. New analysis capabilities are layered around that engine.
   duplicate comparison or parsing logic.
 
 These boundaries use focused modules and enums. They do not require a plugin registry.
-The current filesystem comparison contract and JSON schema v1 remain unchanged until a
-separate schema update is designed and tested.
+The filesystem comparison contract and JSON schema v1 remain unchanged. File comparison
+uses the separate JSON schema v2.
 
 ## Detection contract
 
@@ -47,10 +47,29 @@ Malformed ELF or PE input returns an error without a partial report. Unknown fil
 receive only the bounded sample classification. The result is not an atomic filesystem
 snapshot; inputs should remain stable during inspection.
 
+## File comparison
+
+`compare OLD NEW` accepts two regular files as well as two directories. It inspects both
+files, then compares equal-sized inputs byte-for-byte. Different sizes establish a
+byte-level change without reading file bodies a second time. The shared byte-read limit
+covers detection, structural inspection, and exact comparison across both inputs. The
+entry limit is shared across structural inspection of both files.
+
+Matching ELF inputs compare normalized header, section, segment, interpreter, dependency,
+import, export, symbol, build-ID, GNU stack, and GNU RELRO facts. Matching PE inputs
+compare normalized header, section, import, delay-import, export, resource, CodeView, and
+certificate-table facts. Record ordering does not affect the result. A different detected
+input kind is reported as a format mismatch. Text and unknown-binary pairs receive exact
+byte comparison only. Byte-level change is independent of semantic fact changes, and
+semantic fact equality does not establish behavioral equivalence.
+
+File-comparison reports use JSON schema v2. Directory comparison remains on schema v1;
+the two schemas have distinct `analysis_type` values and are not interchangeable.
+
 ## Current implementation
 
 The `input` module implements detection and bounded read accounting. The `inspection`
-module validates supported ELF and PE candidates and builds static facts, while the
+module validates supported ELF and PE candidates and builds static facts. The
+`binary_compare` module combines exact file-byte comparison with normalized facts. The
 existing `compare` and `scan` modules continue to handle extracted Linux root filesystem
-directories. Binary semantic comparison and source-language analysis remain future
-layers.
+directories. Source-language analysis remains future work.

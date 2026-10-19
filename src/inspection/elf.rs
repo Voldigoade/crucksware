@@ -205,6 +205,7 @@ where
         .transpose()?;
 
     Ok(ElfInspection {
+        entries_read: budget.entries,
         class: if file.is_64() { "ELF64" } else { "ELF32" },
         byte_order: if endian.is_little_endian() {
             "little-endian"
