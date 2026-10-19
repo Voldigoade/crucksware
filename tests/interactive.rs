@@ -6,6 +6,7 @@ use std::{
 #[test]
 fn no_arguments_starts_a_shell_that_handles_help_unknown_commands_and_exit() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_crucksware"))
+        .env("TERM", "dumb")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -36,6 +37,7 @@ fn no_arguments_starts_a_shell_that_handles_help_unknown_commands_and_exit() {
 #[test]
 fn shell_exits_normally_at_end_of_input() {
     let output = Command::new(env!("CARGO_BIN_EXE_crucksware"))
+        .env("TERM", "dumb")
         .stdin(Stdio::null())
         .output()
         .expect("binary starts");
@@ -566,6 +568,7 @@ fn failed_analysis_does_not_replace_the_last_successful_result() {
 
 fn run_shell(input: &[u8]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_crucksware"))
+        .env("TERM", "dumb")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
