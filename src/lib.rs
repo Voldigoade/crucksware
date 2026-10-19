@@ -1,6 +1,7 @@
 //! Experimental filesystem comparison core. The Rust API is not stable.
 
 pub mod error;
+pub mod input;
 pub mod limits;
 pub mod model;
 pub mod path;
