@@ -2,6 +2,7 @@ use std::fs;
 
 use crucksware::inspection::inspect_file_with_limits;
 use crucksware::{
+    binary_compare::compare_files,
     inspection::{DEFAULT_MAX_BYTES_READ, MAX_PE_FILE_BYTES, inspect_file},
     report,
 };
@@ -202,6 +203,23 @@ fn reports_imports_delay_imports_exports_and_resource_metadata() {
 }
 
 #[test]
+fn rejects_distinct_invalid_utf16_resource_names_instead_of_collapsing_them() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old_path = temporary.path().join("old.exe");
+    let new_path = temporary.path().join("new.exe");
+    fs::write(&old_path, pe_with_resource_name(0xd800)).unwrap();
+    fs::write(&new_path, pe_with_resource_name(0xd801)).unwrap();
+
+    let error = compare_files(&old_path, &new_path, DEFAULT_MAX_BYTES_READ, 1_000).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid UTF-16 PE resource name")
+    );
+}
+
+#[test]
 fn deterministic_pe_mutations_never_panic() {
     let temporary = tempfile::tempdir().unwrap();
     let path = temporary.path().join("mutated-pe");
@@ -396,6 +414,26 @@ fn pe_with_codeview() -> Vec<u8> {
     }
     write_u32(&mut bytes, codeview + 20, 3);
     bytes[codeview + 24..codeview + 24 + 17].copy_from_slice(b"C:\\build\\app.pdb\0");
+    bytes
+}
+
+fn pe_with_resource_name(code_unit: u16) -> Vec<u8> {
+    let mut bytes = pe_image(true, None);
+    let directories = 0x80 + 4 + 20 + 112;
+    set_directory(&mut bytes, directories, 2, 0x1160, 0x60);
+
+    let resource = 0x200 + 0x160;
+    write_u16(&mut bytes, resource + 12, 1);
+    write_u32(&mut bytes, resource + 16, 0x8000_0018);
+    write_u32(&mut bytes, resource + 20, 0x8000_0028);
+    write_u16(&mut bytes, resource + 24, 1);
+    write_u16(&mut bytes, resource + 26, code_unit);
+
+    write_u16(&mut bytes, resource + 40 + 14, 1);
+    write_u32(&mut bytes, resource + 56, 1);
+    write_u32(&mut bytes, resource + 60, 72);
+    write_u32(&mut bytes, resource + 72, 0x11d0);
+
     bytes
 }
 
