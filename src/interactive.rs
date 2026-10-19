@@ -258,13 +258,14 @@ fn compare_two_files(editor: &mut DefaultEditor, session: &mut Session) {
         (Ok(old), Ok(new)) => Some([old, new]),
         _ => None,
     };
+    let max_bytes_read = Limits::default().max_bytes_read;
 
     let comparison = match progress::ProgressRenderer::new() {
         Some(mut progress) => {
             let result = crucksware::binary_compare::compare_files_with_progress(
                 &old,
                 &new,
-                DEFAULT_MAX_BYTES_READ,
+                max_bytes_read,
                 crucksware::inspection::DEFAULT_MAX_ENTRIES,
                 |event| progress.on_event(event),
             );
@@ -274,7 +275,7 @@ fn compare_two_files(editor: &mut DefaultEditor, session: &mut Session) {
         None => compare_files(
             &old,
             &new,
-            DEFAULT_MAX_BYTES_READ,
+            max_bytes_read,
             crucksware::inspection::DEFAULT_MAX_ENTRIES,
         ),
     };
