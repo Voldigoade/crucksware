@@ -14,6 +14,7 @@ use super::{LastAnalysis, Session};
 enum ReportFormat {
     Text,
     Json,
+    Markdown,
 }
 
 enum ReportDestination {
@@ -30,14 +31,15 @@ pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session
         None => (arguments, ""),
     };
     if format.is_empty() {
-        eprintln!("Usage: report <text|json> [OUTPUT]");
+        eprintln!("Usage: report <text|json|markdown> [OUTPUT]");
         return;
     }
     let format = match format {
         "text" => ReportFormat::Text,
         "json" => ReportFormat::Json,
+        "markdown" => ReportFormat::Markdown,
         _ => {
-            eprintln!("crucksware: report format must be `text` or `json`");
+            eprintln!("crucksware: report format must be `text`, `json`, or `markdown`");
             return;
         }
     };
@@ -117,6 +119,7 @@ fn write_report_contents(last: &LastAnalysis, format: ReportFormat, file: File) 
     match format {
         ReportFormat::Text => report::text::write_text(&last.diff, &mut output)?,
         ReportFormat::Json => report::json::write_json(&last.diff, &mut output)?,
+        ReportFormat::Markdown => report::markdown::write_markdown(&last.diff, &mut output)?,
     }
     output.flush()
 }
