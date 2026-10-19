@@ -1,0 +1,534 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
+    path::Path,
+};
+
+use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator};
+
+use super::{SourceLanguage, StructuralAction, StructuralChange, StructuralKind, StructuralStatus};
+use crate::{error::DiffError, path::RelPath};
+
+const MAX_SOURCE_RECORDS: u64 = 50_000;
+const MAX_SOURCE_NODES: usize = 500_000;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct Fact {
+    kind: StructuralKind,
+    name: String,
+    signature: Option<String>,
+}
+
+pub(super) fn language_for_path(path: &Path) -> Option<SourceLanguage> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "rs" => Some(SourceLanguage::Rust),
+        "c" | "h" => Some(SourceLanguage::C),
+        "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" => Some(SourceLanguage::Cpp),
+        "py" => Some(SourceLanguage::Python),
+        _ => None,
+    }
+}
+
+pub(super) struct Analyzer {
+    parsers: BTreeMap<SourceLanguage, Parser>,
+    queries: BTreeMap<SourceLanguage, Query>,
+}
+
+impl Analyzer {
+    pub(super) fn new() -> Self {
+        Self {
+            parsers: BTreeMap::new(),
+            queries: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn compare(
+        &mut self,
+        language: SourceLanguage,
+        old: &str,
+        new: &str,
+        path: &RelPath,
+    ) -> Result<(StructuralStatus, Vec<StructuralChange>), DiffError> {
+        let display_path = Path::new(OsStr::from_bytes(path.as_bytes()));
+        self.prepare(language, display_path)?;
+        let parser = self
+            .parsers
+            .get_mut(&language)
+            .ok_or_else(|| source_error(display_path, "parser state is unavailable".to_owned()))?;
+        let query = self
+            .queries
+            .get(&language)
+            .ok_or_else(|| source_error(display_path, "parser query is unavailable".to_owned()))?;
+        let (old_has_errors, old_facts) = parse(parser, query, language, old, path)?;
+        let (new_has_errors, new_facts) = parse(parser, query, language, new, path)?;
+        if old_has_errors || new_has_errors {
+            return Ok((StructuralStatus::SyntaxErrors, Vec::new()));
+        }
+        Ok((
+            StructuralStatus::Complete,
+            compare_facts(old_facts, new_facts),
+        ))
+    }
+
+    fn prepare(&mut self, language: SourceLanguage, path: &Path) -> Result<(), DiffError> {
+        let (grammar, tags_query) = grammar(language);
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.parsers.entry(language) {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&grammar)
+                .map_err(|error| source_error(path, error.to_string()))?;
+            entry.insert(parser);
+        }
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.queries.entry(language) {
+            let query = Query::new(&grammar, tags_query)
+                .map_err(|error| source_error(path, error.to_string()))?;
+            entry.insert(query);
+        }
+        Ok(())
+    }
+}
+
+fn parse(
+    parser: &mut Parser,
+    query: &Query,
+    language: SourceLanguage,
+    source: &str,
+    path: &RelPath,
+) -> Result<(bool, BTreeSet<Fact>), DiffError> {
+    let display_path = Path::new(OsStr::from_bytes(path.as_bytes())).to_path_buf();
+    let tree = parser
+        .parse(source.as_bytes(), None)
+        .ok_or_else(|| source_error(&display_path, "parser did not complete".to_owned()))?;
+    let root = tree.root_node();
+    if root.has_error() {
+        return Ok((true, BTreeSet::new()));
+    }
+
+    let mut facts = BTreeSet::new();
+    collect_imports_and_unions(language, root, source, &mut facts)?;
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, root, source.as_bytes());
+    while let Some(query_match) = matches.next() {
+        let mut name = None;
+        let mut definition = None;
+        let mut kind = None;
+        for capture in query_match.captures() {
+            let Some(capture_name) = query.capture_names().get(capture.index as usize) else {
+                continue;
+            };
+            if *capture_name == "name" {
+                name = Some(capture.node);
+            } else if let Some(capture_kind) = capture_name.strip_prefix("definition.") {
+                definition = Some(capture.node);
+                kind = kind_from_tag(capture_kind);
+            }
+        }
+        let (Some(name_node), Some(definition_node), Some(tag_kind)) = (name, definition, kind)
+        else {
+            continue;
+        };
+        let Some(mut kind) = kind_from_definition(tag_kind, definition_node, name_node) else {
+            continue;
+        };
+        let Some(name_text) = node_text(name_node, source) else {
+            continue;
+        };
+        let (qualified_name, is_c_member) =
+            qualified_name(name_text, definition_node, language, source);
+        if language == SourceLanguage::C && is_c_member {
+            continue;
+        }
+        if matches!(kind, StructuralKind::Function) && is_member(language, definition_node) {
+            kind = StructuralKind::Method;
+        }
+        facts.insert(Fact {
+            kind,
+            name: qualified_name,
+            signature: (matches!(kind, StructuralKind::Function | StructuralKind::Method))
+                .then(|| signature(definition_node, source))
+                .flatten(),
+        });
+        check_record_count(facts.len())?;
+    }
+    Ok((false, facts))
+}
+
+fn grammar(language: SourceLanguage) -> (Language, &'static str) {
+    match language {
+        SourceLanguage::C => (tree_sitter_c::LANGUAGE.into(), tree_sitter_c::TAGS_QUERY),
+        SourceLanguage::Cpp => (
+            tree_sitter_cpp::LANGUAGE.into(),
+            tree_sitter_cpp::TAGS_QUERY,
+        ),
+        SourceLanguage::Python => (
+            tree_sitter_python::LANGUAGE.into(),
+            tree_sitter_python::TAGS_QUERY,
+        ),
+        SourceLanguage::Rust => (
+            tree_sitter_rust::LANGUAGE.into(),
+            tree_sitter_rust::TAGS_QUERY,
+        ),
+    }
+}
+
+fn kind_from_tag(tag: &str) -> Option<StructuralKind> {
+    Some(match tag {
+        "function" => StructuralKind::Function,
+        "method" => StructuralKind::Method,
+        "class" => StructuralKind::Class,
+        "interface" => StructuralKind::Interface,
+        "type" => StructuralKind::Type,
+        "constant" => StructuralKind::Constant,
+        "module" => StructuralKind::Module,
+        "macro" => StructuralKind::Macro,
+        _ => return None,
+    })
+}
+
+fn kind_from_definition(
+    tag_kind: StructuralKind,
+    definition: Node<'_>,
+    name: Node<'_>,
+) -> Option<StructuralKind> {
+    let mut node = Some(name);
+    while let Some(current) = node {
+        let kind = match current.kind() {
+            "struct_item" | "struct_specifier" => Some(StructuralKind::Struct),
+            "union_item" | "union_specifier" => Some(StructuralKind::Union),
+            "enum_item" | "enum_specifier" => Some(StructuralKind::Enum),
+            "type_item" | "type_definition" => Some(StructuralKind::Type),
+            "trait_item" => Some(StructuralKind::Interface),
+            "class_specifier" => Some(StructuralKind::Class),
+            "mod_item" => Some(StructuralKind::Module),
+            "macro_definition" => Some(StructuralKind::Macro),
+            _ => None,
+        };
+        if kind.is_some() {
+            return kind;
+        }
+        if current == definition {
+            break;
+        }
+        node = current.parent();
+    }
+    Some(tag_kind)
+}
+
+fn node_text(node: Node<'_>, source: &str) -> Option<String> {
+    source
+        .get(node.start_byte()..node.end_byte())
+        .map(str::to_owned)
+}
+
+fn qualified_name(
+    name: String,
+    definition: Node<'_>,
+    language: SourceLanguage,
+    source: &str,
+) -> (String, bool) {
+    let mut parent = definition.parent();
+    let mut scopes = Vec::new();
+    let mut c_member = false;
+    while let Some(node) = parent {
+        c_member |= language == SourceLanguage::C && node.kind() == "struct_specifier";
+        let field = match (language, node.kind()) {
+            (SourceLanguage::Rust, "mod_item" | "struct_item" | "enum_item" | "trait_item")
+            | (
+                SourceLanguage::Cpp,
+                "namespace_definition" | "class_specifier" | "struct_specifier",
+            )
+            | (SourceLanguage::Python, "class_definition")
+            | (SourceLanguage::C, "struct_specifier") => Some("name"),
+            (SourceLanguage::Rust, "impl_item") => Some("type"),
+            _ => None,
+        };
+        if let Some(field) = field
+            && let Some(scope) = node
+                .child_by_field_name(field)
+                .and_then(|scope_node| node_text(scope_node, source))
+        {
+            scopes.push(scope);
+        }
+        parent = node.parent();
+    }
+
+    scopes.reverse();
+    scopes.push(name);
+    (scopes.join("::"), c_member)
+}
+
+fn is_member(language: SourceLanguage, definition: Node<'_>) -> bool {
+    if language == SourceLanguage::Rust {
+        let mut node = Some(definition);
+        while let Some(current) = node {
+            if current.kind() == "declaration_list" {
+                return current
+                    .parent()
+                    .is_some_and(|owner| matches!(owner.kind(), "impl_item" | "trait_item"));
+            }
+            node = current.parent();
+        }
+        return false;
+    }
+
+    let mut parent = definition.parent();
+    while let Some(node) = parent {
+        match (language, node.kind()) {
+            (SourceLanguage::Cpp, "field_declaration_list" | "class_specifier")
+            | (SourceLanguage::Python, "class_definition") => return true,
+            _ => {}
+        }
+        parent = node.parent();
+    }
+    false
+}
+
+fn signature(node: Node<'_>, source: &str) -> Option<String> {
+    let mut container = node;
+    let mut parent = node.parent();
+    while let Some(candidate) = parent {
+        if matches!(
+            candidate.kind(),
+            "function_item"
+                | "function_signature_item"
+                | "function_definition"
+                | "declaration"
+                | "function_declaration"
+        ) {
+            container = candidate;
+            break;
+        }
+        if matches!(
+            candidate.kind(),
+            "source_file" | "translation_unit" | "module"
+        ) {
+            break;
+        }
+        parent = candidate.parent();
+    }
+    let end_byte = container
+        .child_by_field_name("body")
+        .map_or(container.end_byte(), |body| body.start_byte());
+    normalized_tokens(container, source, end_byte)
+}
+
+fn normalized_tokens(node: Node<'_>, source: &str, end_byte: usize) -> Option<String> {
+    let mut pending = vec![node];
+    let mut tokens = Vec::new();
+    while let Some(current) = pending.pop() {
+        if current.start_byte() >= end_byte || current.kind() == "comment" {
+            continue;
+        }
+        if current.child_count() == 0 {
+            if let Some(token) = source.get(current.start_byte()..current.end_byte()) {
+                tokens.push(token);
+            }
+            continue;
+        }
+        for index in (0..current.child_count()).rev() {
+            if let Some(child) = current.child(index) {
+                pending.push(child);
+            }
+        }
+    }
+    (!tokens.is_empty()).then(|| tokens.join(" "))
+}
+
+fn collect_imports_and_unions(
+    language: SourceLanguage,
+    root: Node<'_>,
+    source: &str,
+    facts: &mut BTreeSet<Fact>,
+) -> Result<(), DiffError> {
+    let mut pending = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = pending.pop() {
+        visited = visited
+            .checked_add(1)
+            .ok_or_else(|| limit_error(ResourceLimit::Nodes))?;
+        if visited > MAX_SOURCE_NODES {
+            return Err(limit_error(ResourceLimit::Nodes));
+        }
+        if is_import(language, node.kind()) {
+            let import = normalized_tokens(node, source, node.end_byte())
+                .unwrap_or_else(|| source[node.start_byte()..node.end_byte()].to_owned());
+            facts.insert(Fact {
+                kind: StructuralKind::Import,
+                name: import,
+                signature: None,
+            });
+            check_record_count(facts.len())?;
+        }
+        if matches!(language, SourceLanguage::C | SourceLanguage::Cpp)
+            && node.kind() == "union_specifier"
+            && let Some(name) = node.child_by_field_name("name")
+            && let Some(name) = node_text(name, source)
+        {
+            facts.insert(Fact {
+                kind: StructuralKind::Union,
+                name,
+                signature: None,
+            });
+            check_record_count(facts.len())?;
+        }
+        for index in (0..node.child_count()).rev() {
+            if let Some(child) = node.child(index) {
+                pending.push(child);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_import(language: SourceLanguage, kind: &str) -> bool {
+    match language {
+        SourceLanguage::C | SourceLanguage::Cpp => kind == "preproc_include",
+        SourceLanguage::Python => matches!(kind, "import_statement" | "import_from_statement"),
+        SourceLanguage::Rust => kind == "use_declaration",
+    }
+}
+
+fn compare_facts(old: BTreeSet<Fact>, new: BTreeSet<Fact>) -> Vec<StructuralChange> {
+    let mut old_groups = group_facts(old);
+    let mut new_groups = group_facts(new);
+    let mut keys: BTreeSet<_> = old_groups.keys().cloned().collect();
+    keys.extend(new_groups.keys().cloned());
+    let mut changes = Vec::new();
+    for key in keys {
+        let old_signatures = old_groups.remove(&key).unwrap_or_default();
+        let new_signatures = new_groups.remove(&key).unwrap_or_default();
+        let mut old_unmatched = old_signatures.clone();
+        let mut new_unmatched = new_signatures.clone();
+        old_unmatched.retain(|signature| {
+            if let Some(index) = new_unmatched.iter().position(|other| other == signature) {
+                new_unmatched.remove(index);
+                false
+            } else {
+                true
+            }
+        });
+        let paired = old_unmatched.len().min(new_unmatched.len());
+        for index in 0..paired {
+            changes.push(StructuralChange {
+                action: StructuralAction::SignatureChanged,
+                kind: key.0,
+                name: key.1.clone(),
+                before_signature: old_unmatched[index].clone(),
+                after_signature: new_unmatched[index].clone(),
+            });
+        }
+        for signature in old_unmatched.into_iter().skip(paired) {
+            changes.push(StructuralChange {
+                action: StructuralAction::Removed,
+                kind: key.0,
+                name: key.1.clone(),
+                before_signature: signature,
+                after_signature: None,
+            });
+        }
+        for signature in new_unmatched.into_iter().skip(paired) {
+            changes.push(StructuralChange {
+                action: StructuralAction::Added,
+                kind: key.0,
+                name: key.1.clone(),
+                before_signature: None,
+                after_signature: signature,
+            });
+        }
+    }
+    changes.sort_by(|left, right| {
+        (
+            left.kind,
+            &left.name,
+            left.action,
+            &left.before_signature,
+            &left.after_signature,
+        )
+            .cmp(&(
+                right.kind,
+                &right.name,
+                right.action,
+                &right.before_signature,
+                &right.after_signature,
+            ))
+    });
+    changes
+}
+
+fn group_facts(facts: BTreeSet<Fact>) -> BTreeMap<(StructuralKind, String), Vec<Option<String>>> {
+    let mut groups = BTreeMap::new();
+    for fact in facts {
+        groups
+            .entry((fact.kind, fact.name))
+            .or_insert_with(Vec::new)
+            .push(fact.signature);
+    }
+    for signatures in groups.values_mut() {
+        signatures.sort();
+    }
+    groups
+}
+
+fn check_record_count(count: usize) -> Result<(), DiffError> {
+    if count as u64 > MAX_SOURCE_RECORDS {
+        return Err(limit_error(ResourceLimit::Records));
+    }
+    Ok(())
+}
+
+enum ResourceLimit {
+    Nodes,
+    Records,
+}
+
+fn limit_error(resource: ResourceLimit) -> DiffError {
+    let (resource, limit) = match resource {
+        ResourceLimit::Nodes => (crate::error::Resource::SourceNodes, MAX_SOURCE_NODES as u64),
+        ResourceLimit::Records => (crate::error::Resource::SourceRecords, MAX_SOURCE_RECORDS),
+    };
+    DiffError::LimitExceeded { resource, limit }
+}
+
+fn source_error(path: &std::path::Path, message: String) -> DiffError {
+    DiffError::SourceAnalysis {
+        path: path.to_path_buf(),
+        message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_extensions_only_select_a_parser_hint() {
+        assert_eq!(
+            language_for_path(Path::new("firmware.C")),
+            Some(SourceLanguage::C)
+        );
+        assert_eq!(
+            language_for_path(Path::new("firmware.hpp")),
+            Some(SourceLanguage::Cpp)
+        );
+        assert_eq!(
+            language_for_path(Path::new("main.py")),
+            Some(SourceLanguage::Python)
+        );
+        assert_eq!(language_for_path(Path::new("README")), None);
+    }
+
+    #[test]
+    fn syntax_errors_do_not_produce_structural_changes() {
+        let path = RelPath::new(b"bad.rs".to_vec()).unwrap();
+        let mut analyzer = Analyzer::new();
+
+        let (status, changes) = analyzer
+            .compare(SourceLanguage::Rust, "fn valid() {}", "fn broken( {", &path)
+            .unwrap();
+
+        assert_eq!(status, StructuralStatus::SyntaxErrors);
+        assert!(changes.is_empty());
+    }
+}

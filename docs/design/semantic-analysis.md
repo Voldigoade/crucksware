@@ -66,10 +66,46 @@ semantic fact equality does not establish behavioral equivalence.
 File-comparison reports use JSON schema v2. Directory comparison remains on schema v1;
 the two schemas have distinct `analysis_type` values and are not interchangeable.
 
+## Source-aware directory comparison
+
+`compare --source-aware OLD NEW` runs the existing directory inventory, exact content
+comparison, metadata classification, and revalidation before analyzing changed text
+files. It does not add another tree walker. Unchanged files and metadata-only changes are
+not parsed. The ordinary `compare OLD NEW` behavior is unchanged.
+
+The source pass reads each changed regular file through a no-follow, nonblocking open and
+checks it against the inventory stamp before and after reading. It shares the directory
+comparison byte budget. A text file is bounded to 8 MiB by default and 64 MiB maximum;
+each side also contributes to the existing total byte-read limit. Text diffs are limited
+to 200,000 lines per side. Structural parsing traverses at most 500,000 syntax nodes and
+retains at most 50,000 facts per file. Exceeding a limit fails the comparison before any
+report is written.
+
+The initial structural languages are Rust, C, C++, and Python. Extensions are parser
+hints only. Changed text with an unsupported extension still receives a deterministic
+line diff. A supported file with syntax errors also keeps its line diff, while structural
+changes are omitted and marked `syntax_errors`. Binary files are not parsed as source;
+a transition between text and binary content is reported without an invented line diff.
+Structural facts include definitions, normalized function or method signatures, and
+imports. Ordering is normalized for deterministic output. These facts do not describe
+control flow, runtime behavior, intent, or behavioral equivalence.
+
+Source-aware text output appends source-change and structural rows to the filesystem
+report. JSON output uses schema v3, whose `filesystem` member retains schema v1 and whose
+`source_changes` member contains bounded line counts, language, parse status, and
+structural changes. The schema version identifies this report shape and is independent of
+the tool's semantic version.
+
+The `similar` crate supplies the line-diff algorithm. Tree-sitter and its Rust, C, C++,
+and Python grammars provide one parser interface for the selected languages. Source
+analysis runs only for changed text files; it is not a general source-code understanding
+system.
+
 ## Current implementation
 
 The `input` module implements detection and bounded read accounting. The `inspection`
 module validates supported ELF and PE candidates and builds static facts. The
 `binary_compare` module combines exact file-byte comparison with normalized facts. The
-existing `compare` and `scan` modules continue to handle extracted Linux root filesystem
-directories. Source-language analysis remains future work.
+existing `compare` and `scan` modules handle extracted Linux root filesystem directories.
+The `source` module layers bounded text diffs and selected syntax facts over the existing
+directory result.
