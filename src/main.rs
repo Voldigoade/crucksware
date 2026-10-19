@@ -14,7 +14,8 @@ use crucksware::{
     limits::Limits,
     model::Diff,
     report,
-    source::{DEFAULT_MAX_SOURCE_FILE_BYTES, MAX_SOURCE_FILE_BYTES, SourceDiff},
+    semantic_tree::SemanticTreeDiff,
+    source::{DEFAULT_MAX_SOURCE_FILE_BYTES, MAX_SOURCE_FILE_BYTES},
 };
 
 mod interactive;
@@ -46,7 +47,7 @@ struct CompareArgs {
         long,
         value_enum,
         default_value = "text",
-        help = "Report format; directory JSON uses schema v1 and file JSON uses schema v2"
+        help = "Report format; directory JSON uses schema v1, file v2, semantic-tree v4"
     )]
     format: OutputFormat,
 
@@ -84,7 +85,7 @@ struct CompareArgs {
 
     #[arg(
         long,
-        help = "Add bounded text and structural analysis for changed source files"
+        help = "Add bounded source and supported binary analysis for changed directory entries"
     )]
     source_aware: bool,
 
@@ -92,7 +93,7 @@ struct CompareArgs {
         long,
         value_parser = parse_source_file_bytes,
         default_value_t = DEFAULT_MAX_SOURCE_FILE_BYTES,
-        help = "Maximum bytes read from one text file in source-aware mode"
+        help = "Maximum bytes analyzed from one text file in source-aware mode"
     )]
     max_source_file_bytes: u64,
 
@@ -270,7 +271,7 @@ fn run_source_compare(args: &CompareArgs) -> ExitCode {
         max_path_bytes: args.max_path_bytes,
         max_bytes_read: args.max_bytes_read,
     };
-    let diff = match crucksware::compare_source(
+    let diff = match crucksware::compare_semantic_tree(
         &args.old,
         &args.new,
         limits,
@@ -283,7 +284,7 @@ fn run_source_compare(args: &CompareArgs) -> ExitCode {
         }
     };
 
-    if let Err(error) = write_source_report(&diff, args.format) {
+    if let Err(error) = write_semantic_tree_report(&diff, args.format) {
         eprintln!("crucksware: failed to write report: {error}");
         return ExitCode::from(2);
     }
@@ -311,12 +312,12 @@ fn write_file_report(comparison: &FileComparison, format: OutputFormat) -> io::R
     output.flush()
 }
 
-fn write_source_report(diff: &SourceDiff, format: OutputFormat) -> io::Result<()> {
+fn write_semantic_tree_report(diff: &SemanticTreeDiff, format: OutputFormat) -> io::Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     match format {
-        OutputFormat::Text => report::source::write_text(diff, &mut output)?,
-        OutputFormat::Json => report::source::write_json(diff, &mut output)?,
+        OutputFormat::Text => report::semantic_tree::write_text(diff, &mut output)?,
+        OutputFormat::Json => report::semantic_tree::write_json(diff, &mut output)?,
     }
     output.flush()
 }

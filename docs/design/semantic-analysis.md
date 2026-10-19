@@ -15,7 +15,8 @@ checks. New analysis capabilities are layered around that engine.
 
 These boundaries use focused modules and enums. They do not require a plugin registry.
 The filesystem comparison contract and JSON schema v1 remain unchanged. File comparison
-uses the separate JSON schema v2.
+uses JSON schema v2. Semantic-tree comparison uses schema v4; schema v3 remains the
+documented source-only report shape.
 
 ## Detection contract
 
@@ -66,12 +67,12 @@ semantic fact equality does not establish behavioral equivalence.
 File-comparison reports use JSON schema v2. Directory comparison remains on schema v1;
 the two schemas have distinct `analysis_type` values and are not interchangeable.
 
-## Source-aware directory comparison
+## Source-aware and mixed directory comparison
 
 `compare --source-aware OLD NEW` runs the existing directory inventory, exact content
-comparison, metadata classification, and revalidation before analyzing changed text
-files. It does not add another tree walker. Unchanged files and metadata-only changes are
-not parsed. The ordinary `compare OLD NEW` behavior is unchanged.
+comparison, metadata classification, and revalidation before analyzing changed files. It
+does not add another tree walker. Unchanged files and metadata-only changes are not
+analyzed. The ordinary `compare OLD NEW` behavior is unchanged.
 
 The source pass reads each changed regular file through a no-follow, nonblocking open and
 checks it against the inventory stamp before and after reading. It shares the directory
@@ -90,16 +91,25 @@ Structural facts include definitions, normalized function or method signatures, 
 imports. Ordering is normalized for deterministic output. These facts do not describe
 control flow, runtime behavior, intent, or behavioral equivalence.
 
-Source-aware text output appends source-change and structural rows to the filesystem
-report. JSON output uses schema v3, whose `filesystem` member retains schema v1 and whose
-`source_changes` member contains bounded line counts, language, parse status, and
-structural changes. The schema version identifies this report shape and is independent of
-the tool's semantic version.
+Changed files that classify as text receive the bounded line and structural analysis
+described above. Changed ELF and PE files use the same inspection and normalized-fact
+comparison as single-file comparison. Other binary files are identified as unknown
+binary and receive no invented semantic facts. These analyses run only for file content
+changes; unchanged and metadata-only paths are skipped. Analysis uses the same total
+byte-read budget and entry limit as the directory comparison. `byte_level_changed` is
+true when both file versions exist and the exact directory diff found different content;
+it is null for a one-sided addition or removal, where there is no byte pair to compare.
+
+Source-aware text output appends source-change, structural, and binary rows to the
+filesystem report. JSON output uses schema v4, whose `filesystem` member retains schema
+v1 and whose `source_changes` and `binary_changes` members carry the additional results.
+Schema v3 remains the contract for the earlier source-only report shape. Schema versions
+identify report shapes and are independent of the tool's semantic version.
 
 The `similar` crate supplies the line-diff algorithm. Tree-sitter and its Rust, C, C++,
-and Python grammars provide one parser interface for the selected languages. Source
-analysis runs only for changed text files; it is not a general source-code understanding
-system.
+and Python grammars provide one parser interface for the selected languages. The existing
+ELF and PE parsers provide static format facts for changed binaries. These analyses run
+only on changed files and are not general source-code or binary understanding systems.
 
 ## Current implementation
 
@@ -108,4 +118,6 @@ module validates supported ELF and PE candidates and builds static facts. The
 `binary_compare` module combines exact file-byte comparison with normalized facts. The
 existing `compare` and `scan` modules handle extracted Linux root filesystem directories.
 The `source` module layers bounded text diffs and selected syntax facts over the existing
-directory result.
+directory result. The `semantic_tree` module adds changed ELF and PE inspections and
+unknown-binary classifications, while `report::semantic_tree` renders the combined
+schema-v4 output.

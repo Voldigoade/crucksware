@@ -3,17 +3,17 @@ use std::io::{self, Write};
 use serde::Serialize;
 
 use crate::{
+    binary_compare::SemanticChange,
     path::encode_bytes,
     report::{json, text},
-    source::{
-        SourceAnalysisStatus, SourceDiff, SourceFileChange, StructuralChange, StructuralStatus,
-    },
+    semantic_tree::{BinaryAnalysisStatus, BinaryFileChange, SemanticTreeDiff},
+    source::{SourceAnalysisStatus, SourceFileChange, StructuralChange, StructuralStatus},
 };
 
 #[cfg(test)]
 mod tests;
 
-pub fn write_text(diff: &SourceDiff, output: &mut impl Write) -> io::Result<()> {
+pub fn write_text(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
     text::write_text(&diff.filesystem, output)?;
     for change in &diff.source_changes {
         write!(output, "SOURCE\t{}\t", encode_bytes(change.path.as_bytes()))?;
@@ -38,6 +38,29 @@ pub fn write_text(diff: &SourceDiff, output: &mut impl Write) -> io::Result<()> 
             write_structural_change(structural, output)?;
         }
     }
+    for change in &diff.binary_changes {
+        writeln!(
+            output,
+            "BINARY\t{}\told_kind={}\tnew_kind={}\told_size_bytes={}\tnew_size_bytes={}\tbyte_level_changed={}\tsemantic_status={}",
+            encode_bytes(change.path.as_bytes()),
+            optional_kind(change.old_kind),
+            optional_kind(change.new_kind),
+            optional_size(change.old_size_bytes),
+            optional_size(change.new_size_bytes),
+            optional_bool(change.byte_level_changed),
+            change.semantic_status.as_str(),
+        )?;
+        for semantic in &change.semantic_changes {
+            writeln!(
+                output,
+                "BINARY_SEMANTIC\t{}\t{}\tbefore={}\tafter={}",
+                encode_bytes(change.path.as_bytes()),
+                serde_json::to_string(&semantic.field)?,
+                serde_json::to_string(&semantic.before)?,
+                serde_json::to_string(&semantic.after)?,
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -58,15 +81,20 @@ fn write_structural_change(change: &StructuralChange, output: &mut impl Write) -
     output.write_all(b"\n")
 }
 
-pub fn write_json(diff: &SourceDiff, output: &mut impl Write) -> io::Result<()> {
-    let report = JsonSourceReport {
-        schema_version: 3,
-        analysis_type: "source_tree_comparison",
+pub fn write_json(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
+    let report = JsonSemanticTreeReport {
+        schema_version: 4,
+        analysis_type: "semantic_tree_comparison",
         filesystem: json::json_report(&diff.filesystem),
         source_changes: diff
             .source_changes
             .iter()
             .map(JsonSourceChange::from)
+            .collect(),
+        binary_changes: diff
+            .binary_changes
+            .iter()
+            .map(JsonBinaryChange::from)
             .collect(),
     };
     serde_json::to_writer_pretty(&mut *output, &report).map_err(io::Error::from)?;
@@ -74,11 +102,65 @@ pub fn write_json(diff: &SourceDiff, output: &mut impl Write) -> io::Result<()> 
 }
 
 #[derive(Serialize)]
-struct JsonSourceReport<'a> {
+struct JsonSemanticTreeReport<'a> {
     schema_version: u8,
     analysis_type: &'static str,
     filesystem: json::JsonReport<'a>,
     source_changes: Vec<JsonSourceChange<'a>>,
+    binary_changes: Vec<JsonBinaryChange<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonBinaryChange<'a> {
+    path: String,
+    old_kind: Option<&'static str>,
+    new_kind: Option<&'static str>,
+    old_size_bytes: Option<String>,
+    new_size_bytes: Option<String>,
+    byte_level_changed: Option<bool>,
+    semantic_status: &'static str,
+    semantic_changes: Vec<JsonSemanticChange<'a>>,
+}
+
+impl<'a> From<&'a BinaryFileChange> for JsonBinaryChange<'a> {
+    fn from(change: &'a BinaryFileChange) -> Self {
+        Self {
+            path: encode_bytes(change.path.as_bytes()),
+            old_kind: change.old_kind.map(|kind| kind.as_str()),
+            new_kind: change.new_kind.map(|kind| kind.as_str()),
+            old_size_bytes: change.old_size_bytes.map(|size| size.to_string()),
+            new_size_bytes: change.new_size_bytes.map(|size| size.to_string()),
+            byte_level_changed: change.byte_level_changed,
+            semantic_status: match change.semantic_status {
+                BinaryAnalysisStatus::SingleInput => "single_input",
+                BinaryAnalysisStatus::Compared => "compared",
+                BinaryAnalysisStatus::FormatMismatch => "format_mismatch",
+                BinaryAnalysisStatus::Unsupported => "unsupported",
+            },
+            semantic_changes: change
+                .semantic_changes
+                .iter()
+                .map(JsonSemanticChange::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonSemanticChange<'a> {
+    field: &'a str,
+    before: &'a serde_json::Value,
+    after: &'a serde_json::Value,
+}
+
+impl<'a> From<&'a SemanticChange> for JsonSemanticChange<'a> {
+    fn from(change: &'a SemanticChange) -> Self {
+        Self {
+            field: &change.field,
+            before: &change.before,
+            after: &change.after,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -142,5 +224,22 @@ fn structural_status_name(status: StructuralStatus) -> &'static str {
         StructuralStatus::SyntaxErrors => "syntax_errors",
         StructuralStatus::Unsupported => "unsupported",
         StructuralStatus::NotApplicable => "not_applicable",
+    }
+}
+
+fn optional_kind(kind: Option<crate::input::InputKind>) -> &'static str {
+    kind.map(crate::input::InputKind::as_str).unwrap_or("none")
+}
+
+fn optional_size(size: Option<u64>) -> String {
+    size.map(|size| size.to_string())
+        .unwrap_or_else(|| "none".to_owned())
+}
+
+fn optional_bool(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "none",
     }
 }

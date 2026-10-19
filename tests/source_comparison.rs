@@ -2,6 +2,8 @@ use std::{fs, process::Command};
 
 use tempfile::TempDir;
 
+mod common;
+
 fn roots() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
     let temporary = tempfile::tempdir().unwrap();
     let old = temporary.path().join("old");
@@ -31,8 +33,8 @@ fn source_mode_reports_bounded_line_changes_for_unrecognized_text_files() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 3);
-    assert_eq!(report["analysis_type"], "source_tree_comparison");
+    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["analysis_type"], "semantic_tree_comparison");
     assert_eq!(report["source_changes"][0]["path"], "notes.conf");
     assert_eq!(report["source_changes"][0]["lines_added"], 2);
     assert_eq!(report["source_changes"][0]["lines_removed"], 1);
@@ -377,6 +379,118 @@ fn source_mode_does_not_treat_a_symlink_as_removed_source() {
     assert_eq!(output.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(report["source_changes"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn source_mode_combines_source_and_elf_analysis_for_a_mixed_tree() {
+    let (_temporary, old, new) = roots();
+    fs::create_dir_all(old.join("src")).unwrap();
+    fs::create_dir_all(new.join("src")).unwrap();
+    fs::create_dir_all(old.join("usr/bin")).unwrap();
+    fs::create_dir_all(new.join("usr/bin")).unwrap();
+    fs::write(old.join("src/auth.rs"), "fn login(user: &str) {}\n").unwrap();
+    fs::write(
+        new.join("src/auth.rs"),
+        "fn login(user: &str, otp: u32) {}\n",
+    )
+    .unwrap();
+    fs::write(old.join("usr/bin/service"), common::minimal_elf64(0x401000)).unwrap();
+    fs::write(new.join("usr/bin/service"), common::minimal_elf64(0x402000)).unwrap();
+
+    let output = run_source_compare(&old, &new);
+    let repeated = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(repeated.status.code(), Some(1));
+    assert_eq!(output.stdout, repeated.stdout);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["filesystem"]["schema_version"], 1);
+    assert_eq!(report["source_changes"].as_array().unwrap().len(), 1);
+    let binary = &report["binary_changes"][0];
+    assert_eq!(binary["path"], "usr/bin/service");
+    assert_eq!(binary["old_kind"], "elf");
+    assert_eq!(binary["new_kind"], "elf");
+    assert_eq!(binary["semantic_status"], "compared");
+    assert_eq!(binary["byte_level_changed"], true);
+    assert!(
+        binary["semantic_changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "entry_point")
+    );
+}
+
+#[test]
+fn source_mode_adds_pe_semantics_to_a_mixed_tree() {
+    let (_temporary, old, new) = roots();
+    fs::create_dir_all(old.join("bin")).unwrap();
+    fs::create_dir_all(new.join("bin")).unwrap();
+    fs::write(old.join("bin/tool"), common::minimal_pe64(0x1000)).unwrap();
+    fs::write(new.join("bin/tool"), common::minimal_pe64(0x2000)).unwrap();
+    fs::create_dir_all(old.join("lib")).unwrap();
+    fs::create_dir_all(new.join("lib")).unwrap();
+    let unchanged_elf = common::minimal_elf64(0x401000);
+    fs::write(old.join("lib/stable"), &unchanged_elf).unwrap();
+    fs::write(new.join("lib/stable"), unchanged_elf).unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let binary = &report["binary_changes"][0];
+    assert_eq!(report["binary_changes"].as_array().unwrap().len(), 1);
+    assert_eq!(binary["old_kind"], "pe");
+    assert_eq!(binary["new_kind"], "pe");
+    assert_eq!(binary["semantic_status"], "compared");
+    assert!(
+        binary["semantic_changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "entry_point_rva")
+    );
+}
+
+#[test]
+fn source_mode_reports_unknown_binary_changes_without_invented_semantics() {
+    let (_temporary, old, new) = roots();
+    fs::create_dir_all(old.join("assets")).unwrap();
+    fs::write(old.join("assets/blob.dat"), [0, 0xff, 1, 2]).unwrap();
+    fs::create_dir_all(new.join("assets")).unwrap();
+    fs::write(new.join("assets/blob.dat"), [0, 0xfe, 1, 2]).unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let binary = &report["binary_changes"][0];
+    assert_eq!(binary["old_kind"], "unknown_binary");
+    assert_eq!(binary["new_kind"], "unknown_binary");
+    assert_eq!(binary["semantic_status"], "unsupported");
+    assert_eq!(binary["byte_level_changed"], true);
+    assert!(binary["semantic_changes"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn source_mode_reports_added_binary_as_one_sided_inspection() {
+    let (_temporary, old, new) = roots();
+    fs::create_dir_all(old.join("bin")).unwrap();
+    fs::create_dir_all(new.join("bin")).unwrap();
+    fs::write(new.join("bin/program"), common::minimal_elf64(0x401000)).unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let binary = &report["binary_changes"][0];
+    assert_eq!(binary["old_kind"], serde_json::Value::Null);
+    assert_eq!(binary["new_kind"], "elf");
+    assert_eq!(binary["old_size_bytes"], serde_json::Value::Null);
+    assert_eq!(binary["semantic_status"], "single_input");
+    assert_eq!(binary["byte_level_changed"], serde_json::Value::Null);
+    assert_eq!(binary["semantic_changes"].as_array().unwrap().len(), 0);
 }
 
 #[test]

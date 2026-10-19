@@ -30,7 +30,7 @@ including the [JSON schema](docs/json/schema-1.json). File comparisons use
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
 The [binary analysis design](docs/design/binary-analysis.md) describes current ELF and
 PE inspection and future format support. The [semantic analysis design](docs/design/semantic-analysis.md)
-documents source-aware directory comparison and its limits.
+documents source-aware and mixed-directory comparison and their limits.
 
 ```sh
 crucksware compare old-rootfs/ new-rootfs/
@@ -57,12 +57,14 @@ do not apply to file comparisons. Use
 `crucksware inspect --help` to adjust inspection limits.
 `compare --source-aware` is a separate directory mode. It reports bounded line changes
 for changed text files and extracts definitions and imports from Rust, C, C++, and Python
-files when parsing succeeds. File extensions select parser hints only. Unsupported text
-still receives a line diff, and syntax errors do not suppress that diff. The mode uses
-JSON schema v3, which embeds the existing filesystem schema v1 report. It limits each
-changed text file to 8 MiB by default, with a 64 MiB maximum, and also applies the
-directory entry and total byte-read limits. It does not analyze unchanged files or infer
-behavioral equivalence.
+files when parsing succeeds. Changed ELF and PE files are inspected with the same static
+analyzers used by file comparison. Changed unknown binary files are identified without
+invented semantics. File extensions select source parser hints only. Unsupported text
+still receives a line diff, and syntax errors do not suppress that diff. [JSON schema v4](docs/json/schema-4.json)
+embeds the existing filesystem schema v1 report and carries source and binary results.
+Each changed source text file is limited to 8 MiB by default, with a 64 MiB maximum; the
+directory entry and total byte-read limits also apply. Unchanged files are not analyzed,
+and the report does not infer behavioral equivalence.
 
 ## Interactive shell
 

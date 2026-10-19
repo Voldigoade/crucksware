@@ -1,6 +1,6 @@
 use std::{fmt, io, path::PathBuf};
 
-use crate::path::encode_bytes;
+use crate::{input::InputError, path::encode_bytes};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Side {
@@ -73,6 +73,10 @@ pub enum DiffError {
         path: PathBuf,
         message: String,
     },
+    InputInspection {
+        side: Side,
+        source: InputError,
+    },
     UnsupportedPlatform,
 }
 
@@ -104,6 +108,7 @@ impl fmt::Display for DiffError {
                 "source analysis failed at {}: {message}",
                 path_text(path)
             ),
+            Self::InputInspection { side, source } => write!(f, "{side}: {source}"),
             Self::UnsupportedPlatform => f.write_str("comparison is supported only on Linux"),
         }
     }
@@ -113,6 +118,7 @@ impl std::error::Error for DiffError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
+            Self::InputInspection { source, .. } => Some(source),
             _ => None,
         }
     }

@@ -6,12 +6,6 @@ pub const MAX_SOURCE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 #[cfg(target_os = "linux")]
 mod parser;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceDiff {
-    pub filesystem: Diff,
-    pub source_changes: Vec<SourceFileChange>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SourceLanguage {
     C,

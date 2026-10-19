@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::input::{
-    InputDetection, InputError, InputKind, InputStamp, detect_input_bounded, revalidate_input_file,
+    InputDetection, InputError, InputKind, InputStamp, detect_input_bounded,
+    detect_open_file_bounded, revalidate_input_file,
 };
 
 mod elf;
@@ -210,6 +211,26 @@ pub fn inspect_file_with_limits(
     max_bytes_read: u64,
     max_entries: u64,
 ) -> Result<FileInspection, InputError> {
+    let detection = detect_input_bounded(path, max_bytes_read)?;
+    inspect_detection(path, detection, max_bytes_read, max_entries)
+}
+
+pub(crate) fn inspect_open_file_with_limits(
+    path: &Path,
+    file: File,
+    max_bytes_read: u64,
+    max_entries: u64,
+) -> Result<FileInspection, InputError> {
+    let detection = detect_open_file_bounded(path, file, max_bytes_read)?;
+    inspect_detection(path, detection, max_bytes_read, max_entries)
+}
+
+fn inspect_detection(
+    path: &Path,
+    detection: InputDetection,
+    max_bytes_read: u64,
+    max_entries: u64,
+) -> Result<FileInspection, InputError> {
     let InputDetection {
         kind,
         size_bytes,
@@ -218,7 +239,7 @@ pub fn inspect_file_with_limits(
         sample,
         pe_signature_probe,
         stamp,
-    } = detect_input_bounded(path, max_bytes_read)?;
+    } = detection;
     let Some(size_bytes) = size_bytes else {
         return Err(InputError::UnsupportedType {
             path: path.to_path_buf(),
