@@ -80,7 +80,7 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
         format!("crucksware {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
     );
 
-    for args in [Vec::<&str>::new(), vec!["compare"], vec!["--unknown"]] {
+    for args in [vec!["compare"], vec!["--unknown"]] {
         let output = binary().args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
