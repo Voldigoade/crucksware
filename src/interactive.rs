@@ -215,7 +215,7 @@ fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static 
 
 fn print_help() {
     println!(
-        "Interactive commands:\n  anal         Compare two extracted rootfs directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest analysis as text or JSON\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
+        "Interactive commands:\n  anal         Compare two extracted rootfs directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest analysis as text, JSON, or Markdown\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
     );
 }
 

@@ -34,10 +34,11 @@ and 2 when comparison or output fails. See `crucksware compare --help` for limit
 
 Run `crucksware` without arguments to start the shell. Use `anal` or `analyze` to compare
 two extracted rootfs directories, and `last` to review the most recent successful result.
-`report text [OUTPUT]` and `report json [OUTPUT]` export that result. The shell prompts
-for an output path when omitted and asks before replacing an existing file. It does not
-save analysis history automatically. Report destinations inside either compared rootfs,
-symbolic-link destinations, and existing files with multiple hard links are refused.
+`report text [OUTPUT]`, `report json [OUTPUT]`, and `report markdown [OUTPUT]` export that
+result. The shell prompts for an output path when omitted and asks before replacing an
+existing file. It does not save analysis history automatically. Report destinations
+inside either compared rootfs, symbolic-link destinations, and existing files with
+multiple hard links are refused.
 Replacing any existing report is also refused on non-Unix platforms because stable
 standard APIs do not expose the hard-link count there. Keep the compared trees and report
 directory stable while a command runs; path-based operations do not contain hostile

@@ -199,6 +199,36 @@ fn report_exports_text_and_json_to_paths_with_spaces() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn report_exports_markdown_with_safe_paths_and_summary() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let input_file = new.join("new | <script>");
+    let report_path = temporary.path().join("markdown report.md");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(&input_file, b"new").expect("new file is written");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport markdown {}\nexit\n",
+        old.display(),
+        new.display(),
+        report_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let markdown = std::fs::read_to_string(report_path).expect("Markdown report is written");
+    assert!(markdown.starts_with("# Crucksware report\n\n## Summary\n"));
+    assert!(markdown.contains("`new%20%7C%20%3Cscript%3E`"));
+    assert!(!markdown.contains("<script>"));
+    assert!(markdown.contains("| Total changes | 1 |"));
+    assert_eq!(std::fs::read(input_file).unwrap(), b"new");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn report_preserves_leading_and_trailing_spaces_in_output_names() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old");
