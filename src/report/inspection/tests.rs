@@ -61,6 +61,12 @@ fn json_inspection_uses_schema_five_and_preserves_large_sizes_as_strings() {
             .unwrap()
             .starts_with("^(0|[1-9]")
     );
+    assert!(
+        schema["$defs"]["decimal_string"]["pattern"]
+            .as_str()
+            .unwrap()
+            .contains("18446744073709550[0-9]{3}")
+    );
     assert_eq!(
         schema["$defs"]["pe_export"]["properties"]["name"]["oneOf"][1]["$ref"],
         "#/$defs/encoded_bytes"
