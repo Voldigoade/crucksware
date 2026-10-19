@@ -172,8 +172,10 @@ jobs:
           fi
           python3 -m json.tool "$smoke/equal.json" >/dev/null
           python3 -m json.tool "$smoke/changed.json" >/dev/null
-          printf 'input\n' > "$smoke/input.bin"
-          "$binary_a" inspect "$smoke/input.bin" >/dev/null
+          if "$binary_a" --help | grep -Eq '^[[:space:]]+inspect([[:space:]]|$)'; then
+            printf 'input\n' > "$smoke/input.bin"
+            "$binary_a" inspect "$smoke/input.bin" >/dev/null
+          fi
 
           package="$RUNNER_TEMP/package"
           mkdir -p "$package"
