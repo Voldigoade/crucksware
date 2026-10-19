@@ -239,6 +239,7 @@ fn matches_the_complete_schema_one_golden_and_preserves_json_types() {
   ]
 }
 "#;
+    let expected = expected.replace("0.1.0-dev.0", env!("CARGO_PKG_VERSION"));
     let mut actual = Vec::new();
     write_json(&complete_diff(), &mut actual).unwrap();
 
@@ -278,7 +279,8 @@ fn empty_diff_has_stable_pretty_json_and_a_trailing_newline() {
         "  },\n",
         "  \"changes\": []\n",
         "}\n",
-    );
+    )
+    .replace("0.1.0-dev.0", env!("CARGO_PKG_VERSION"));
     let mut actual = Vec::new();
     write_json(&Diff::default(), &mut actual).unwrap();
 
