@@ -8,12 +8,12 @@ Measurements were collected on 2026-10-19 using release builds from the current
 - Machine: AMD Ryzen 7 5700X, x86_64, 16 logical CPUs
 - OS: Ubuntu 26.04.1 LTS, Linux 7.0.0-38-generic
 - Rust: `rustc 1.99.1 (58cf8f9c3 2026-10-13)`
-- Base: `8293cb35feb2d427d1a04557c1b19a2dff7279e4`
-- Feature snapshot: `9ff2c2107b35635b5ae136653e6b12c05876b129`
+- Base for the initial broad measurements: `8293cb35feb2d427d1a04557c1b19a2dff7279e4`
+- Initial feature snapshot: `9ff2c2107b35635b5ae136653e6b12c05876b129`
 - Build: `cargo build --release --locked`
 
-The base is the repository's current `main` at measurement time. It is a direct
-descendant of `f53dc293c39ad3e78946d2f75ecc027ee4031817`.
+The initial broad-measurement base descends from the v0.1.0 baseline. The final direct
+comparison spot-check below uses current main at `a36fa3880e9e370c23dd36cebfe5f9dd309dfe79`.
 
 Fixtures were generated deterministically with Python's standard library. Each command
 received one warm-up run followed by five measured runs, interleaved between base and
@@ -60,42 +60,44 @@ through `inspect`; each malformed candidate returned the input-error status, unk
 binaries returned success, and no panic text was reported. Batch times were 178.5, 176.4,
 178.0, 173.8, and 175.8 ms. This is a timing smoke test, not fuzzing evidence.
 
-## Final branch direct-comparison spot-check
+## Final post-review direct-comparison spot-check
 
-A final spot-check on 2026-10-19 compared release binaries from main
-(`8293cb35feb2d427d1a04557c1b19a2dff7279e4`, version 0.1.0) and the feature branch
-(`fd4c2c2`, version 0.2.0-dev.0). It used the same machine and Rust toolchain listed
-above. Deterministic fixtures contained 10,000 files with 100 changes, 10,000 identical
-files, or one 8 MiB file differing at its final byte. Each binary received one warm-up
-run and five measured runs per fixture. Run order alternated, stdout was discarded, and
-the filesystem cache was warm.
+On 2026-10-19, release binaries from main (`a36fa3880e9e370c23dd36cebfe5f9dd309dfe79`)
+and PR code snapshot (`7a4e124fefb71fc456eee0a83586e35244fe53fe`) were tested on the
+machine and Rust toolchain listed above. Fixtures were deterministic: 10,000 256-byte
+files per tree with 100 changed files, 10,000 identical 256-byte files per tree, and one
+8 MiB file differing at its final byte. Each binary received one warm-up and five
+measured runs per fixture. Run order alternated, output was discarded, and the filesystem
+cache was warm. Process elapsed time was measured with Python's `perf_counter`; expected
+comparison exit codes were checked.
 
-| Fixture | Main median (range) | Feature median (range) |
+| Fixture | Main median (range) | PR median (range) |
 | --- | ---: | ---: |
-| 10,000 files, 100 changed | 436.91 ms (435.60-440.84) | 437.80 ms (433.27-439.47) |
-| 10,000 identical files | 434.07 ms (430.77-435.42) | 438.51 ms (433.56-443.93) |
-| One 8 MiB file, final byte changed | 2.62 ms (2.57-2.75) | 2.73 ms (2.65-3.00) |
+| 10,000 files, 100 changed | 461.58 ms (448.51-463.93) | 449.50 ms (441.32-473.85) |
+| 10,000 identical files | 453.42 ms (449.00-468.57) | 451.38 ms (445.37-502.75) |
+| One 8 MiB file, final byte changed | 3.19 ms (3.01-3.28) | 3.45 ms (3.25-3.57) |
 
-The sampled ranges overlap. This spot-check did not measure a material direct-comparison
-regression. It measured elapsed process time only; it did not measure memory. The current
-release executable sizes were 2,029,528 bytes on main and 11,977,944 bytes on the feature
-branch. These results apply only to this machine, these fixtures, and warm-cache runs.
+The sampled ranges overlap for all three fixtures. This spot-check did not measure a
+material direct-comparison slowdown. It measured elapsed process time only and did not
+measure memory. The unstripped release executables measured 2,029,528 bytes on main and
+11,983,592 bytes on the PR code snapshot, a 9,954,064-byte increase. `size -B` reported
+text/data/bss sizes of 1,501,785/47,304/1,643 bytes on main and
+10,273,141/313,184/3,768 bytes on the PR snapshot. These results apply only to this
+machine, these fixtures, and warm-cache runs.
 
 ## Binary size and observations
 
-The unstripped release executable measured 2,029,528 bytes at the base and 11,977,944
-bytes on the feature branch, an increase of 9,948,416 bytes. The corresponding `size`
-text sections were 1,501,785 and 10,268,425 bytes. The feature dependency tree includes
-the object parser, Tree-sitter, and the selected language grammars. No section-level
-attribution or stripped-binary comparison was performed.
+The final measured unstripped release executable was 11,983,592 bytes, 9,954,064 bytes
+larger than main. The feature dependency tree includes the object parser, Tree-sitter,
+and the selected language grammars. No section-level attribution or stripped-binary
+comparison was performed.
 
-For ordinary filesystem comparison, the base and feature sample ranges substantially
-overlap. The measured medians show no material elapsed-time regression in these warm
-synthetic runs. Feature direct-mode peak RSS was about 1.0 to 1.5 MiB higher in the
-measured cases. Source-aware analysis adds expected work for changed files: about 13 ms
-for 20 changed Rust files, 73 ms for 1,000 changed Rust files, and 11 ms for the
-8 MiB ELF or PE overlay changes. The 5.46 MB text diff used 34.5 MiB peak RSS and took
-77 ms in this fixture.
+Across the latest direct-comparison fixtures, sampled ranges overlap and do not show a
+material elapsed-time regression. Earlier broad measurements found feature direct-mode
+peak RSS about 1.0 to 1.5 MiB higher in the tested cases. In those synthetic source-aware
+measurements, analysis took about 13 ms for 20 changed Rust files, 73 ms for 1,000
+changed Rust files, and 11 ms for 8 MiB ELF or PE overlay changes. The 5.46 MB text diff
+used 34.5 MiB peak RSS and took 77 ms in that fixture.
 
 These results describe this machine, these synthetic fixtures, warm filesystem cache,
 and this build. They are not general performance guarantees. No code optimization was
