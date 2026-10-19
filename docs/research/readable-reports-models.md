@@ -83,11 +83,17 @@ Machine: AMD Ryzen 7 5700X, 8 cores and 16 logical CPUs; Ubuntu 26.04.1, Linux
 the 14 cases, with average and median shown. Peak RSS is GNU `time` maximum resident
 set size.
 
-| Model | Mean / median / max total inference | Median prompt processing | Median first token | Model load | Peak RSS |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Qwen3-0.6B Q4_0 | 1,520 / 1,466 / 2,644 | 330 | 331 | 401 | 937 MiB |
-| Qwen3.5-0.8B Q4_0 | 2,894 / 2,788 / 4,368 | 527 | 527 | 556 | 970 MiB |
-| LFM2.5-350M QAD Q4_0 | 637 / 661 / 994 | 189 | 189 | 180 | 437 MiB |
+| Model | Mean / median / max total inference | Median prompt processing | Median first token | Median decode throughput | Model load, cached filesystem | Peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen3-0.6B Q4_0 | 1,520 / 1,466 / 2,644 | 330 | 331 | 64.4 tokens/s | 401 ms | 937 MiB |
+| Qwen3.5-0.8B Q4_0 | 2,894 / 2,788 / 4,368 | 527 | 527 | 38.1 tokens/s | 556 ms | 970 MiB |
+| LFM2.5-350M QAD Q4_0 | 637 / 661 / 994 | 189 | 189 | 127.9 tokens/s | 180 ms | 437 MiB |
+
+Throughput is generated tokens divided by the runtime's measured decode time; it does
+not include prompt processing. Model-load timing includes process initialization and
+mapping the model after its file was already present in the operating-system cache. It is
+not a cold-device load measurement. Artifact sizes are the one-time download-size
+measurement; transfer duration was not measured. No model was selected for the product.
 
 The Qwen3 packet outputs were generally readable in English, French, Spanish, and
 Simplified Chinese. However, the English corpus exposed two material evidence-reference
