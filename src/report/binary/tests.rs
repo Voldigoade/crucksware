@@ -36,23 +36,23 @@ fn text_report_distinguishes_byte_and_semantic_changes() {
 }
 
 #[test]
-fn json_report_has_a_stable_schema_two_golden_and_trailing_newline() {
+fn json_report_has_a_stable_schema_six_golden_and_trailing_newline() {
     let mut output = Vec::new();
 
     write_json(&comparison(), &mut output).unwrap();
 
     assert_eq!(
         String::from_utf8(output).unwrap(),
-        "{\n  \"analysis_type\": \"file_comparison\",\n  \"byte_level_changed\": true,\n  \"new_kind\": \"ELF\",\n  \"new_size_bytes\": \"11\",\n  \"old_kind\": \"ELF\",\n  \"old_size_bytes\": \"10\",\n  \"schema_version\": 2,\n  \"semantic_changes\": [\n    {\n      \"after\": \"8192\",\n      \"before\": \"4096\",\n      \"field\": \"entry_point\"\n    }\n  ],\n  \"semantic_status\": \"compared\"\n}\n"
+        "{\n  \"analysis_type\": \"file_comparison\",\n  \"byte_level_changed\": true,\n  \"new_kind\": \"ELF\",\n  \"new_size_bytes\": \"11\",\n  \"old_kind\": \"ELF\",\n  \"old_size_bytes\": \"10\",\n  \"schema_version\": 6,\n  \"semantic_changes\": [\n    {\n      \"after\": \"8192\",\n      \"before\": \"4096\",\n      \"field\": \"entry_point\"\n    }\n  ],\n  \"semantic_status\": \"compared\"\n}\n"
     );
 }
 
 #[test]
-fn schema_two_freezes_the_file_comparison_fields_and_statuses() {
+fn schema_six_freezes_the_file_comparison_fields_and_wide_fact_strings() {
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/json/schema-2.json")).unwrap();
+        serde_json::from_str(include_str!("../../../docs/json/schema-6.json")).unwrap();
 
-    assert_eq!(schema["properties"]["schema_version"]["const"], 2);
+    assert_eq!(schema["properties"]["schema_version"]["const"], 6);
     assert_eq!(
         schema["properties"]["analysis_type"]["const"],
         "file_comparison"
@@ -114,6 +114,21 @@ fn schema_two_freezes_the_file_comparison_fields_and_statuses() {
             );
         }
     }
+}
+
+#[test]
+fn schema_two_keeps_its_original_number_compatible_contract() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/json/schema-2.json")).unwrap();
+
+    assert_eq!(schema["properties"]["schema_version"]["const"], 2);
+    assert!(schema["$defs"].is_null());
+    assert!(
+        schema["properties"]["semantic_changes"]["items"]["properties"]["before"]["type"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("number"))
+    );
 }
 
 #[test]

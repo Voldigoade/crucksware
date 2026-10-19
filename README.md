@@ -26,8 +26,9 @@ Input files are never executed. Direct SquashFS input is not implemented.
 
 The [v0.1 design](docs/design/v0.1.md) defines the rootfs comparison contract, including
 [JSON schema v1](docs/json/schema-1.json). File comparisons use
-[schema v2](docs/json/schema-2.json). Single-file inspection uses
-[schema v5](docs/json/schema-5.json). The
+[schema v6](docs/json/schema-6.json), and source-aware comparisons use
+[schema v7](docs/json/schema-7.json). Schemas v2 and v4 retain their earlier contracts.
+Single-file inspection uses [schema v5](docs/json/schema-5.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
 The [binary analysis design](docs/design/binary-analysis.md) describes current ELF and
 PE inspection and future format support. The [semantic analysis design](docs/design/semantic-analysis.md)
@@ -46,7 +47,7 @@ crucksware inspect --format json ./program.bin
 
 `compare` accepts either two directories or two regular files. Select `text`, `json`,
 `markdown`, or `html` with `--format`. Directory JSON uses schema v1, file comparison
-uses schema v2, and source-aware directory comparison uses schema v4. File reports show
+uses schema v6, and source-aware directory comparison uses schema v7. File reports show
 exact byte-level changes separately from normalized ELF or PE facts. If the detected
 formats differ, the report identifies the mismatch. Unknown files receive exact byte
 comparison only. The command exits with status 0 when no change is found, 1 when a change
@@ -67,7 +68,7 @@ for changed text files and extracts definitions and imports from Rust, C, C++, a
 files when parsing succeeds. Changed ELF and PE files are inspected with the same static
 analyzers used by file comparison. Changed unknown binary files are identified without
 invented semantics. File extensions select source parser hints only. Unsupported text
-still receives a line diff, and syntax errors do not suppress that diff. [JSON schema v4](docs/json/schema-4.json)
+still receives a line diff, and syntax errors do not suppress that diff. [JSON schema v7](docs/json/schema-7.json)
 embeds the existing filesystem schema v1 report and carries source and binary results.
 Each changed source text file is limited to 8 MiB by default, with a 64 MiB maximum; the
 directory entry and total byte-read limits also apply. Unchanged files are not analyzed,

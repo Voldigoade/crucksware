@@ -181,7 +181,7 @@ fn compare_dispatches_file_pairs_to_binary_json_reports() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["schema_version"], 6);
     assert_eq!(report["analysis_type"], "file_comparison");
     assert_eq!(report["old_kind"], "unknown binary");
     assert_eq!(report["new_kind"], "unknown binary");
@@ -243,7 +243,7 @@ fn compare_supports_markdown_and_html_for_directory_and_file_reports() {
 }
 
 #[test]
-fn source_aware_reports_keep_schema_four_and_render_semantic_formats() {
+fn source_aware_reports_use_schema_seven_and_render_semantic_formats() {
     let (_temporary, old, new) = roots();
     fs::write(old.join("main.rs"), b"fn before() {}\n").unwrap();
     fs::write(new.join("main.rs"), b"fn after() {}\n").unwrap();
@@ -252,7 +252,7 @@ fn source_aware_reports_keep_schema_four_and_render_semantic_formats() {
     assert_eq!(json.status.code(), Some(1));
     assert!(json.stderr.is_empty());
     let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 7);
     assert_eq!(json["source_changes"][0]["path"], "main.rs");
 
     let markdown = run_compare(&old, &new, &["--source-aware", "--format=markdown"]);

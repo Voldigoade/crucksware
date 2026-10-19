@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[test]
-fn source_report_wraps_the_unchanged_filesystem_schema() {
+fn source_report_uses_schema_seven_and_wraps_the_unchanged_filesystem_schema() {
     let diff = SemanticTreeDiff {
         filesystem: Diff::default(),
         source_changes: vec![SourceFileChange {
@@ -38,7 +38,7 @@ fn source_report_wraps_the_unchanged_filesystem_schema() {
     write_json(&diff, &mut output).unwrap();
 
     let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 7);
     assert_eq!(report["analysis_type"], "semantic_tree_comparison");
     assert_eq!(report["filesystem"]["schema_version"], 1);
     assert_eq!(report["source_changes"][0]["path"], "src/auth.rs");
@@ -48,8 +48,8 @@ fn source_report_wraps_the_unchanged_filesystem_schema() {
         "signature_changed"
     );
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/json/schema-4.json")).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], 4);
+        serde_json::from_str(include_str!("../../../docs/json/schema-7.json")).unwrap();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 7);
     assert!(schema["properties"]["source_changes"]["items"]["properties"]["structural_changes"]["items"]["properties"]["kind"]["enum"]
         .as_array()
         .unwrap()
@@ -119,7 +119,7 @@ fn semantic_tree_json_encodes_binary_paths_and_preserves_large_sizes() {
 
     let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
     let binary = &report["binary_changes"][0];
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 7);
     assert_eq!(binary["path"], "usr/bin/a%09b");
     assert_eq!(binary["old_size_bytes"], u64::MAX.to_string());
     assert_eq!(binary["new_size_bytes"], u64::MAX.to_string());
@@ -127,8 +127,8 @@ fn semantic_tree_json_encodes_binary_paths_and_preserves_large_sizes() {
     assert_eq!(binary["semantic_changes"][0]["after"], "8192");
 
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/json/schema-4.json")).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], 4);
+        serde_json::from_str(include_str!("../../../docs/json/schema-7.json")).unwrap();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 7);
     assert_eq!(
         schema["properties"]["analysis_type"]["const"],
         "semantic_tree_comparison"
@@ -143,9 +143,22 @@ fn semantic_tree_json_encodes_binary_paths_and_preserves_large_sizes() {
     assert_eq!(
         schema["properties"]["binary_changes"]["items"]["properties"]["semantic_changes"]["items"]
             ["$ref"],
-        "schema-2.json#/$defs/semanticChange"
+        "schema-6.json#/$defs/semanticChange"
     );
     assert_eq!(output.last(), Some(&b'\n'));
+}
+
+#[test]
+fn schema_four_preserves_untyped_semantic_values() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/json/schema-4.json")).unwrap();
+
+    assert_eq!(schema["properties"]["schema_version"]["const"], 4);
+    assert_eq!(
+        schema["properties"]["binary_changes"]["items"]["properties"]["semantic_changes"]["items"]
+            ["properties"]["before"],
+        serde_json::json!({})
+    );
 }
 
 #[test]

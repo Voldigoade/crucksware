@@ -38,7 +38,7 @@ fn source_mode_reports_bounded_line_changes_for_unrecognized_text_files() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 7);
     assert_eq!(report["analysis_type"], "semantic_tree_comparison");
     assert_eq!(report["source_changes"][0]["path"], "notes.conf");
     assert_eq!(report["source_changes"][0]["lines_added"], 2);
@@ -504,7 +504,7 @@ fn source_mode_combines_source_and_elf_analysis_for_a_mixed_tree() {
     assert_eq!(repeated.status.code(), Some(1));
     assert_eq!(output.stdout, repeated.stdout);
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 7);
     assert_eq!(report["filesystem"]["schema_version"], 1);
     assert_eq!(report["source_changes"].as_array().unwrap().len(), 1);
     let binary = &report["binary_changes"][0];
