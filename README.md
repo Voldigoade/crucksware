@@ -5,10 +5,11 @@ Semantic firmware diff and triage in Rust.
 **Experimental and under active development.** Linux comparison of two extracted root
 filesystem directories is implemented, including exact bounded regular-file comparison
 and filesystem metadata. The direct CLI provides deterministic text and JSON schema v1
-reports for directory comparisons, plus bounded single-file inspection and exact file
+reports for directory comparisons, plus bounded single-file inspection and file
 comparison. ELF and PE file pairs receive normalized structural comparisons and separate
-byte-level results. Other regular files receive exact byte comparison without semantic
-claims.
+byte-level results. Source-aware directory comparison adds bounded text diffs and
+structural facts for Rust, C, C++, and Python files. Other regular files receive exact
+byte comparison without semantic claims.
 The interactive shell adds session summaries and text, JSON, Markdown, and offline HTML
 exports with live progress.
 
@@ -18,9 +19,8 @@ atomic snapshot or containment against concurrent replacement. Reads may update
 filesystem-managed access times.
 
 Crucksware is a focused, local tool for firmware analysts, embedded engineers, reverse
-engineers, and defensive security researchers. It does not extract firmware images or
-analyze source-language structure. Input files are never executed. Direct SquashFS input
-is not implemented.
+engineers, and defensive security researchers. It does not extract firmware images.
+Input files are never executed. Direct SquashFS input is not implemented.
 
 ## Design
 
@@ -29,11 +29,13 @@ including the [JSON schema](docs/json/schema-1.json). File comparisons use
 [JSON schema version 2](docs/json/schema-2.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
 The [binary analysis design](docs/design/binary-analysis.md) describes current ELF and
-PE inspection and future format support.
+PE inspection and future format support. The [semantic analysis design](docs/design/semantic-analysis.md)
+documents source-aware directory comparison and its limits.
 
 ```sh
 crucksware compare old-rootfs/ new-rootfs/
 crucksware compare --format json old-rootfs/ new-rootfs/
+crucksware compare --source-aware project-v1/ project-v2/
 crucksware compare old-program new-program
 crucksware inspect ./program.bin
 ```
@@ -53,6 +55,14 @@ is shared across inspection and exact comparison of both inputs, and its entry l
 shared across semantic parsing of both files. Directory-only depth and path-byte options
 do not apply to file comparisons. Use
 `crucksware inspect --help` to adjust inspection limits.
+`compare --source-aware` is a separate directory mode. It reports bounded line changes
+for changed text files and extracts definitions and imports from Rust, C, C++, and Python
+files when parsing succeeds. File extensions select parser hints only. Unsupported text
+still receives a line diff, and syntax errors do not suppress that diff. The mode uses
+JSON schema v3, which embeds the existing filesystem schema v1 report. It limits each
+changed text file to 8 MiB by default, with a 64 MiB maximum, and also applies the
+directory entry and total byte-read limits. It does not analyze unchanged files or infer
+behavioral equivalence.
 
 ## Interactive shell
 
@@ -78,8 +88,9 @@ concurrent directory replacement.
 ## Development
 
 Install stable Rust with rustfmt and Clippy. The CLI uses clap; JSON output uses Serde
-and serde_json. Report files are published through `tempfile`. The lockfile is committed,
-and CI uses stable Rust on Linux.
+and serde_json. Tree-sitter grammars provide structural facts for the initial source
+languages, and `similar` provides line-diff output. Report files are published through
+`tempfile`. The lockfile is committed, and CI uses stable Rust on Linux.
 
 ```sh
 cargo fmt --check

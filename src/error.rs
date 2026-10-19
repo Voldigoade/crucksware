@@ -23,6 +23,10 @@ pub enum Resource {
     Depth,
     PathBytes,
     BytesRead,
+    SourceFileBytes,
+    SourceLines,
+    SourceNodes,
+    SourceRecords,
 }
 
 impl fmt::Display for Resource {
@@ -32,6 +36,10 @@ impl fmt::Display for Resource {
             Self::Depth => "depth",
             Self::PathBytes => "path bytes",
             Self::BytesRead => "bytes read",
+            Self::SourceFileBytes => "source file byte",
+            Self::SourceLines => "source line",
+            Self::SourceNodes => "source syntax node",
+            Self::SourceRecords => "source record",
         })
     }
 }
@@ -61,6 +69,10 @@ pub enum DiffError {
         resource: Resource,
         limit: u64,
     },
+    SourceAnalysis {
+        path: PathBuf,
+        message: String,
+    },
     UnsupportedPlatform,
 }
 
@@ -87,6 +99,11 @@ impl fmt::Display for DiffError {
             Self::LimitExceeded { resource, limit } => {
                 write!(f, "{resource} limit exceeded ({limit})")
             }
+            Self::SourceAnalysis { path, message } => write!(
+                f,
+                "source analysis failed at {}: {message}",
+                path_text(path)
+            ),
             Self::UnsupportedPlatform => f.write_str("comparison is supported only on Linux"),
         }
     }

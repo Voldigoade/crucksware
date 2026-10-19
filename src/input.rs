@@ -400,7 +400,7 @@ fn pe_signature_offset(sample: &[u8], file_len: u64) -> Option<u64> {
     Some(offset)
 }
 
-fn looks_like_text(sample: &[u8], sample_is_truncated: bool) -> bool {
+pub(crate) fn looks_like_text(sample: &[u8], sample_is_truncated: bool) -> bool {
     let text_len = match std::str::from_utf8(sample) {
         Ok(text) => return text.chars().all(allowed_text_character),
         Err(error) if sample_is_truncated && error.error_len().is_none() => error.valid_up_to(),

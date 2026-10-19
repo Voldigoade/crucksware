@@ -18,20 +18,24 @@ const SCHEMA_VERSION: u8 = 1;
 const PATH_ENCODING: &str = "unix-percent-v1";
 
 pub fn write_json(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
-    let report = JsonReport {
-        schema_version: SCHEMA_VERSION,
-        tool_version: env!("CARGO_PKG_VERSION"),
-        path_encoding: PATH_ENCODING,
-        summary: JsonSummary::from(&diff.summary),
-        changes: JsonChanges(&diff.changes),
-    };
+    let report = json_report(diff);
 
     serde_json::to_writer_pretty(&mut *output, &report).map_err(io::Error::from)?;
     output.write_all(b"\n")
 }
 
+pub(crate) fn json_report(diff: &Diff) -> JsonReport<'_> {
+    JsonReport {
+        schema_version: SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION"),
+        path_encoding: PATH_ENCODING,
+        summary: JsonSummary::from(&diff.summary),
+        changes: JsonChanges(&diff.changes),
+    }
+}
+
 #[derive(Serialize)]
-struct JsonReport<'a> {
+pub(crate) struct JsonReport<'a> {
     schema_version: u8,
     tool_version: &'static str,
     path_encoding: &'static str,

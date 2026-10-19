@@ -7,6 +7,7 @@ use crate::{
     model::{Category, Change, ChangedField, Diff, Entry, Snapshot},
     progress::{ProgressEvent, ProgressPhase, emit},
     scan::{revalidate_with_progress, scan_with_progress},
+    source::{SourceDiff, analyze_changes},
 };
 
 /// Compares extracted Linux trees that remain stable for the entire operation.
@@ -29,15 +30,63 @@ fn compare_inner<F>(
     old: &Path,
     new: &Path,
     limits: Limits,
-    mut progress: Option<F>,
+    progress: Option<F>,
 ) -> Result<Diff, DiffError>
+where
+    F: FnMut(ProgressEvent),
+{
+    Ok(run_comparison(old, new, limits, progress)?.diff)
+}
+
+struct ComparisonRun {
+    diff: Diff,
+    old: Snapshot,
+    new: Snapshot,
+    budget: Budget,
+}
+
+fn run_comparison<F>(
+    old: &Path,
+    new: &Path,
+    limits: Limits,
+    mut progress: Option<F>,
+) -> Result<ComparisonRun, DiffError>
 where
     F: FnMut(ProgressEvent),
 {
     let mut budget = Budget::new(limits);
     let old = scan_with_progress(old, Side::Old, &mut budget, &mut progress)?;
     let new = scan_with_progress(new, Side::New, &mut budget, &mut progress)?;
-    compare_snapshots_with_progress(&old, &new, &mut budget, &mut progress)
+    let diff = compare_snapshots_with_progress(&old, &new, &mut budget, &mut progress)?;
+    Ok(ComparisonRun {
+        diff,
+        old,
+        new,
+        budget,
+    })
+}
+
+pub fn compare_source(
+    old: &Path,
+    new: &Path,
+    limits: Limits,
+    max_source_file_bytes: u64,
+) -> Result<SourceDiff, DiffError> {
+    let mut run = run_comparison(old, new, limits, None::<fn(ProgressEvent)>)?;
+    let source_changes = analyze_changes(
+        &run.diff,
+        &run.old,
+        &run.new,
+        &mut run.budget,
+        max_source_file_bytes,
+    )?;
+    let mut no_progress = None::<fn(ProgressEvent)>;
+    revalidate_with_progress(&run.old, Side::Old, &mut no_progress)?;
+    revalidate_with_progress(&run.new, Side::New, &mut no_progress)?;
+    Ok(SourceDiff {
+        filesystem: run.diff,
+        source_changes,
+    })
 }
 
 #[cfg(test)]

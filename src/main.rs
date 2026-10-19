@@ -14,6 +14,7 @@ use crucksware::{
     limits::Limits,
     model::Diff,
     report,
+    source::{DEFAULT_MAX_SOURCE_FILE_BYTES, MAX_SOURCE_FILE_BYTES, SourceDiff},
 };
 
 mod interactive;
@@ -80,6 +81,20 @@ struct CompareArgs {
         help = "Maximum total bytes read across the comparison"
     )]
     max_bytes_read: u64,
+
+    #[arg(
+        long,
+        help = "Add bounded text and structural analysis for changed source files"
+    )]
+    source_aware: bool,
+
+    #[arg(
+        long,
+        value_parser = parse_source_file_bytes,
+        default_value_t = DEFAULT_MAX_SOURCE_FILE_BYTES,
+        help = "Maximum bytes read from one text file in source-aware mode"
+    )]
+    max_source_file_bytes: u64,
 
     old: PathBuf,
     new: PathBuf,
@@ -159,8 +174,20 @@ fn run_compare(args: CompareArgs) -> ExitCode {
         }
     };
     match (old_shape, new_shape) {
-        (CompareInputShape::Directory, CompareInputShape::Directory) => run_tree_compare(&args),
-        (CompareInputShape::File, CompareInputShape::File) => run_file_compare(&args),
+        (CompareInputShape::Directory, CompareInputShape::Directory) => {
+            if args.source_aware {
+                run_source_compare(&args)
+            } else {
+                run_tree_compare(&args)
+            }
+        }
+        (CompareInputShape::File, CompareInputShape::File) if !args.source_aware => {
+            run_file_compare(&args)
+        }
+        (CompareInputShape::File, CompareInputShape::File) => {
+            eprintln!("crucksware: source-aware comparison requires two directories");
+            ExitCode::from(2)
+        }
         _ => {
             eprintln!("crucksware: compare requires two directories or two regular files");
             ExitCode::from(2)
@@ -236,6 +263,34 @@ fn run_file_compare(args: &CompareArgs) -> ExitCode {
     ExitCode::from(u8::from(changed))
 }
 
+fn run_source_compare(args: &CompareArgs) -> ExitCode {
+    let limits = Limits {
+        max_entries: args.max_entries,
+        max_depth: args.max_depth,
+        max_path_bytes: args.max_path_bytes,
+        max_bytes_read: args.max_bytes_read,
+    };
+    let diff = match crucksware::compare_source(
+        &args.old,
+        &args.new,
+        limits,
+        args.max_source_file_bytes,
+    ) {
+        Ok(diff) => diff,
+        Err(error) => {
+            eprintln!("crucksware: {error}");
+            return ExitCode::from(2);
+        }
+    };
+
+    if let Err(error) = write_source_report(&diff, args.format) {
+        eprintln!("crucksware: failed to write report: {error}");
+        return ExitCode::from(2);
+    }
+
+    ExitCode::from(u8::from(!diff.filesystem.changes.is_empty()))
+}
+
 fn write_report(diff: &Diff, format: OutputFormat) -> io::Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
@@ -252,6 +307,16 @@ fn write_file_report(comparison: &FileComparison, format: OutputFormat) -> io::R
     match format {
         OutputFormat::Text => report::binary::write_text(comparison, &mut output)?,
         OutputFormat::Json => report::binary::write_json(comparison, &mut output)?,
+    }
+    output.flush()
+}
+
+fn write_source_report(diff: &SourceDiff, format: OutputFormat) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    match format {
+        OutputFormat::Text => report::source::write_text(diff, &mut output)?,
+        OutputFormat::Json => report::source::write_json(diff, &mut output)?,
     }
     output.flush()
 }
@@ -274,5 +339,13 @@ fn parse_positive_u64(value: &str) -> Result<u64, String> {
 fn parse_positive_depth(value: &str) -> Result<u64, String> {
     let parsed = parse_positive_u64(value)?;
     usize::try_from(parsed).map_err(|_| "must fit in this platform's usize".to_owned())?;
+    Ok(parsed)
+}
+
+fn parse_source_file_bytes(value: &str) -> Result<u64, String> {
+    let parsed = parse_positive_u64(value)?;
+    if parsed > MAX_SOURCE_FILE_BYTES {
+        return Err(format!("must not exceed {MAX_SOURCE_FILE_BYTES} bytes"));
+    }
     Ok(parsed)
 }
