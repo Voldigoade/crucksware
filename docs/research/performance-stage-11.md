@@ -60,6 +60,27 @@ through `inspect`; each malformed candidate returned the input-error status, unk
 binaries returned success, and no panic text was reported. Batch times were 178.5, 176.4,
 178.0, 173.8, and 175.8 ms. This is a timing smoke test, not fuzzing evidence.
 
+## Final branch direct-comparison spot-check
+
+A final spot-check on 2026-10-19 compared release binaries from main
+(`8293cb35feb2d427d1a04557c1b19a2dff7279e4`, version 0.1.0) and the feature branch
+(`fd4c2c2`, version 0.2.0-dev.0). It used the same machine and Rust toolchain listed
+above. Deterministic fixtures contained 10,000 files with 100 changes, 10,000 identical
+files, or one 8 MiB file differing at its final byte. Each binary received one warm-up
+run and five measured runs per fixture. Run order alternated, stdout was discarded, and
+the filesystem cache was warm.
+
+| Fixture | Main median (range) | Feature median (range) |
+| --- | ---: | ---: |
+| 10,000 files, 100 changed | 436.91 ms (435.60-440.84) | 437.80 ms (433.27-439.47) |
+| 10,000 identical files | 434.07 ms (430.77-435.42) | 438.51 ms (433.56-443.93) |
+| One 8 MiB file, final byte changed | 2.62 ms (2.57-2.75) | 2.73 ms (2.65-3.00) |
+
+The sampled ranges overlap. This spot-check did not measure a material direct-comparison
+regression. It measured elapsed process time only; it did not measure memory. The current
+release executable sizes were 2,029,528 bytes on main and 11,977,944 bytes on the feature
+branch. These results apply only to this machine, these fixtures, and warm-cache runs.
+
 ## Binary size and observations
 
 The unstripped release executable measured 2,029,528 bytes at the base and 11,966,008
