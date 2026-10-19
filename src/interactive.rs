@@ -4,7 +4,9 @@ use std::{
     process::ExitCode,
 };
 
-use crucksware::{compare, limits::Limits, model::Diff};
+mod progress;
+
+use crucksware::{compare, compare_with_progress, limits::Limits, model::Diff};
 use rustyline::{DefaultEditor, config::Configurer, error::ReadlineError};
 
 #[derive(Default)]
@@ -73,7 +75,19 @@ fn analyze(editor: &mut DefaultEditor, session: &mut Session) {
         return;
     };
 
-    match compare(&old, &new, Limits::default()) {
+    let limits = Limits::default();
+    let result = match progress::ProgressRenderer::new() {
+        Some(mut progress) => {
+            let result = compare_with_progress(&old, &new, limits, |event| {
+                progress.on_event(event);
+            });
+            progress.finish();
+            result
+        }
+        None => compare(&old, &new, limits),
+    };
+
+    match result {
         Ok(diff) => {
             session.last_analysis = Some(diff);
             if let Some(diff) = session.last_analysis.as_ref()
