@@ -31,11 +31,29 @@ fn text_report_distinguishes_byte_and_semantic_changes() {
 
     let output = String::from_utf8(output).unwrap();
     assert!(output.starts_with(
-        "Readable summary\nBinary analysis: 2 inputs, 1 semantic field change.\nNotable changes:\n- Binary comparison\n  - E0001: binary field \"entry_point\" changed from \"4096\" to \"8192\".\n  - E0002: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n\n"
+        "Readable summary\nFile comparison: 2 inputs, 1 semantic field change.\nNotable changes:\n- File comparison\n  - E0001: binary field \"entry_point\" changed from \"4096\" to \"8192\".\n  - E0002: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n\n"
     ));
     assert!(output.ends_with(
-        "Binary comparison\nOld: ELF (10 bytes)\nNew: ELF (11 bytes)\nByte-level changed: yes\nSemantic comparison: compared\nSemantic fields changed: 1\nentry_point\t\"4096\"\t\"8192\"\n"
+        "File comparison\nOld: ELF (10 bytes)\nNew: ELF (11 bytes)\nByte-level changed: yes\nSemantic comparison: compared\nSemantic fields changed: 1\nentry_point\t\"4096\"\t\"8192\"\n"
     ));
+}
+
+#[test]
+fn text_file_comparison_summary_does_not_call_the_inputs_binaries() {
+    let mut comparison = comparison();
+    comparison.old_kind = InputKind::Text;
+    comparison.new_kind = InputKind::Text;
+    comparison.semantic_status = SemanticComparisonStatus::Unsupported;
+    comparison.semantic_changes.clear();
+
+    let mut output = Vec::new();
+    write_text(&comparison, &mut output).unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.starts_with(
+        "Readable summary\nFile comparison: 2 inputs, 0 semantic field changes.\nNotable changes:\n"
+    ));
+    assert!(!output.contains("Binary analysis"));
 }
 
 #[test]
@@ -148,9 +166,9 @@ fn markdown_file_report_is_deterministic_and_escapes_semantic_values() {
     assert!(markdown.starts_with(
         concat!(
             "# Crucksware report\n\n## Readable summary\n\n",
-            "Binary analysis: 2 inputs, 1 semantic field change.\n\n",
+            "File comparison: 2 inputs, 1 semantic field change.\n\n",
             "### Notable changes\n\n",
-            "- Binary comparison\n",
+            "- File comparison\n",
             "  - **E0001**: binary field \"entry\\|point\" changed from \"\\<script\\>\\|old\" to \"new\\|value\".\n",
             "  - **E0002**: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n"
         )),
@@ -184,7 +202,7 @@ fn html_file_report_is_offline_deterministic_and_escapes_semantic_values() {
 
     assert!(html.starts_with("<!doctype html>\n<html lang=\"en\">"));
     assert!(html.ends_with("</html>\n"));
-    assert!(html.contains("Binary comparison"));
+    assert!(html.contains("File comparison"));
     assert!(html.contains("entry_point"));
     assert!(html.contains("&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;"));
     assert!(!html.contains("<img src=x"));
