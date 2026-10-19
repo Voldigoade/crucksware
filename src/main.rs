@@ -5,7 +5,13 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use crucksware::{compare, limits::Limits, model::Diff, report};
+use crucksware::{
+    compare,
+    inspection::{DEFAULT_MAX_BYTES_READ, inspect_file},
+    limits::Limits,
+    model::Diff,
+    report,
+};
 
 mod interactive;
 
@@ -24,7 +30,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(about = "Compare two extracted root filesystem directories")]
     Compare(CompareArgs),
+    #[command(about = "Inspect one file without executing it")]
+    Inspect(InspectArgs),
 }
 
 #[derive(Debug, Args)]
@@ -64,6 +73,18 @@ struct CompareArgs {
     new: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct InspectArgs {
+    #[arg(
+        long,
+        value_parser = parse_positive_u64,
+        default_value_t = DEFAULT_MAX_BYTES_READ
+    )]
+    max_bytes_read: u64,
+
+    path: PathBuf,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
     Text,
@@ -78,7 +99,28 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Compare(args) => run_compare(args),
+        Command::Inspect(args) => run_inspect(args),
     }
+}
+
+fn run_inspect(args: InspectArgs) -> ExitCode {
+    let inspection = match inspect_file(&args.path, args.max_bytes_read) {
+        Ok(inspection) => inspection,
+        Err(error) => {
+            eprintln!("crucksware: inspection failed: {error}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    if let Err(error) =
+        report::inspection::write_inspection(&inspection, &mut output).and_then(|()| output.flush())
+    {
+        eprintln!("crucksware: failed to write inspection: {error}");
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_compare(args: CompareArgs) -> ExitCode {

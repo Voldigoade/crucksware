@@ -1,4 +1,5 @@
 pub mod html;
+pub mod inspection;
 pub mod json;
 pub mod markdown;
 mod shared;

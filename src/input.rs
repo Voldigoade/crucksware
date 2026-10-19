@@ -47,6 +47,19 @@ pub enum InputError {
     UnsupportedType {
         path: PathBuf,
     },
+    Changed {
+        path: PathBuf,
+    },
+    LimitExceeded {
+        resource: &'static str,
+        limit: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InputDetection {
+    pub kind: InputKind,
+    pub size_bytes: Option<u64>,
 }
 
 impl fmt::Display for InputError {
@@ -66,6 +79,14 @@ impl fmt::Display for InputError {
                 "unsupported input type at {}",
                 encode_bytes(path.as_os_str().as_encoded_bytes())
             ),
+            Self::Changed { path } => write!(
+                formatter,
+                "input changed during inspection at {}",
+                encode_bytes(path.as_os_str().as_encoded_bytes())
+            ),
+            Self::LimitExceeded { resource, limit } => {
+                write!(formatter, "{resource} limit exceeded ({limit})")
+            }
         }
     }
 }
@@ -74,7 +95,9 @@ impl Error for InputError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::UnsupportedType { .. } => None,
+            Self::UnsupportedType { .. } | Self::Changed { .. } | Self::LimitExceeded { .. } => {
+                None
+            }
         }
     }
 }
@@ -85,9 +108,19 @@ impl Error for InputError {
 /// PE signature. Text classification examines at most 8 KiB and is a heuristic, not a
 /// guarantee about the whole file. File extensions do not affect the result.
 pub fn detect_input(path: &Path) -> Result<InputKind, InputError> {
+    detect_input_bounded(path, u64::MAX).map(|detection| detection.kind)
+}
+
+pub(crate) fn detect_input_bounded(
+    path: &Path,
+    max_bytes_read: u64,
+) -> Result<InputDetection, InputError> {
     let metadata = fs::metadata(path).map_err(|source| input_io("inspect input", path, source))?;
     if metadata.is_dir() {
-        return Ok(InputKind::Directory);
+        return Ok(InputDetection {
+            kind: InputKind::Directory,
+            size_bytes: None,
+        });
     }
     if !metadata.is_file() {
         return Err(InputError::UnsupportedType {
@@ -105,25 +138,81 @@ pub fn detect_input(path: &Path) -> Result<InputKind, InputError> {
         });
     }
 
+    let sample_capacity = if max_bytes_read < SAMPLE_SIZE as u64 {
+        max_bytes_read as usize
+    } else {
+        SAMPLE_SIZE
+    };
     let mut sample = [0; SAMPLE_SIZE];
-    let sample_len = read_sample(&mut file, &mut sample)
+    let sample_len = read_sample(&mut file, &mut sample[..sample_capacity])
         .map_err(|source| input_io("read input", path, source))?;
     let sample = &sample[..sample_len];
 
     if sample.starts_with(ELF_MAGIC) {
-        return Ok(InputKind::Elf);
+        return Ok(InputDetection {
+            kind: InputKind::Elf,
+            size_bytes: Some(metadata.len()),
+        });
     }
-    if has_pe_signature(&mut file, sample, metadata.len())
-        .map_err(|source| input_io("read PE signature", path, source))?
-    {
-        return Ok(InputKind::Pe);
+
+    let bytes_read = sample_len as u64;
+    if let Some(offset) = pe_signature_offset(sample, metadata.len()) {
+        let signature = if let Ok(start) = usize::try_from(offset)
+            && let Some(end) = start.checked_add(PE_SIGNATURE.len())
+            && let Some(signature) = sample.get(start..end)
+        {
+            signature == PE_SIGNATURE
+        } else {
+            let total = bytes_read.checked_add(PE_SIGNATURE.len() as u64).ok_or(
+                InputError::LimitExceeded {
+                    resource: "bytes read",
+                    limit: max_bytes_read,
+                },
+            )?;
+            if total > max_bytes_read {
+                return Err(InputError::LimitExceeded {
+                    resource: "bytes read",
+                    limit: max_bytes_read,
+                });
+            }
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|source| input_io("read PE signature", path, source))?;
+            let mut signature = [0; PE_SIGNATURE.len()];
+            file.read_exact(&mut signature)
+                .map_err(|source| input_io("read PE signature", path, source))?;
+            signature == *PE_SIGNATURE
+        };
+        if signature {
+            return Ok(InputDetection {
+                kind: InputKind::Pe,
+                size_bytes: Some(metadata.len()),
+            });
+        }
     }
+
+    let expected_sample_len = metadata.len().min(SAMPLE_SIZE as u64);
+    if (sample_len as u64) < expected_sample_len {
+        if max_bytes_read >= expected_sample_len {
+            return Err(InputError::Changed {
+                path: path.to_path_buf(),
+            });
+        }
+        return Err(InputError::LimitExceeded {
+            resource: "bytes read",
+            limit: max_bytes_read,
+        });
+    }
+
     let sample_is_truncated = sample_len == SAMPLE_SIZE && metadata.len() > SAMPLE_SIZE as u64;
-    if looks_like_text(sample, sample_is_truncated) {
-        Ok(InputKind::Text)
+    let kind = if looks_like_text(sample, sample_is_truncated) {
+        InputKind::Text
     } else {
-        Ok(InputKind::UnknownBinary)
-    }
+        InputKind::UnknownBinary
+    };
+    Ok(InputDetection {
+        kind,
+        size_bytes: Some(metadata.len()),
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -162,33 +251,19 @@ fn read_sample(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
     Ok(length)
 }
 
-fn has_pe_signature(file: &mut File, sample: &[u8], file_len: u64) -> io::Result<bool> {
+fn pe_signature_offset(sample: &[u8], file_len: u64) -> Option<u64> {
     if !sample.starts_with(b"MZ") || sample.len() < PE_OFFSET_FIELD.end {
-        return Ok(false);
+        return None;
     }
 
-    let Ok(offset_bytes) = <[u8; 4]>::try_from(&sample[PE_OFFSET_FIELD]) else {
-        return Ok(false);
-    };
+    let offset_bytes = <[u8; 4]>::try_from(&sample[PE_OFFSET_FIELD]).ok()?;
     let offset = u64::from(u32::from_le_bytes(offset_bytes));
-    let Some(signature_end) = offset.checked_add(PE_SIGNATURE.len() as u64) else {
-        return Ok(false);
-    };
+    let signature_end = offset.checked_add(PE_SIGNATURE.len() as u64)?;
     if offset < DOS_HEADER_SIZE || signature_end > file_len {
-        return Ok(false);
+        return None;
     }
 
-    if let Ok(start) = usize::try_from(offset)
-        && let Some(end) = start.checked_add(PE_SIGNATURE.len())
-        && let Some(signature) = sample.get(start..end)
-    {
-        return Ok(signature == PE_SIGNATURE);
-    }
-
-    file.seek(SeekFrom::Start(offset))?;
-    let mut signature = [0; PE_SIGNATURE.len()];
-    file.read_exact(&mut signature)?;
-    Ok(&signature == PE_SIGNATURE)
+    Some(offset)
 }
 
 fn looks_like_text(sample: &[u8], sample_is_truncated: bool) -> bool {

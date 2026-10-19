@@ -1,8 +1,9 @@
 # Binary Analysis Design
 
-This is a future design, not a description of current Crucksware behavior. Binary
-inspection and comparison are not implemented. Inputs remain read-only and are never
-executed, loaded by the operating-system loader, or mounted.
+This is a future design, not a description of current Crucksware behavior. Format-specific
+binary inspection and semantic comparison are not implemented. The current generic file
+inspection reports only bounded type, size, and text/binary facts. Inputs remain read-only
+and are never executed, loaded by the operating-system loader, or mounted.
 
 ## Model
 

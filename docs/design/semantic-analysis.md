@@ -20,9 +20,10 @@ separate schema update is designed and tested.
 ## Detection contract
 
 Directories are identified from filesystem metadata. ELF candidates are identified by
-the ELF magic bytes and must still pass the ELF parser before inspection succeeds. PE
-candidates require an `MZ` DOS header, a bounded `e_lfanew` value, and the `PE\0\0`
-signature at that offset. A matching extension is never sufficient evidence.
+the ELF magic bytes. PE candidates require an `MZ` DOS header, a bounded `e_lfanew`
+value, and the `PE\0\0` signature at that offset. A matching extension is never
+sufficient evidence. These checks identify candidates only; they do not validate a full
+format structure.
 
 Generic text classification validates a sample of at most 8 KiB as UTF-8 and accepts
 ordinary text whitespace while rejecting control characters. This is a bounded heuristic
@@ -34,13 +35,19 @@ the metadata check cannot block at open. Path resolution is not an atomic snapsh
 must remain stable during detection, and behavior for a concurrently substituted device
 is not guaranteed.
 
-The detector reports a broad kind only. It does not validate full ELF or PE structures;
-the format-specific inspector owns that validation and must reject malformed input
-cleanly.
+The current single-file inspection reports the detected kind, metadata size, and a
+text/binary classification based on a bounded read. Its default byte-read limit is
+8,196 bytes, covering the 8 KiB sample and a possible four-byte PE signature outside it.
+ELF and PE are labeled as candidates because these signature checks do not validate their
+full structures. Inspection does not calculate a fingerprint or parse format-specific
+structures. The result is not an atomic filesystem snapshot; inputs should remain stable
+during inspection. A format-specific inspector must validate the full structure and
+reject malformed input cleanly.
 
 ## Current implementation
 
-The `input` module implements the detection contract. The existing `compare` and `scan`
-modules continue to handle extracted Linux root filesystem directories. Inspection,
-format parsers, semantic comparison, and source-language analysis are future layers and
-are not implied by detection alone.
+The `input` module implements detection and bounded read accounting. The `inspection`
+module builds basic single-file facts, while the existing `compare` and `scan` modules
+continue to handle extracted Linux root filesystem directories. Format parsers, semantic
+comparison, and source-language analysis are future layers and are not implied by
+detection alone.

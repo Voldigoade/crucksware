@@ -8,7 +8,13 @@ use std::{
 mod progress;
 mod reports;
 
-use crucksware::{compare, compare_with_progress, limits::Limits, model::Diff};
+use crucksware::{
+    compare, compare_with_progress,
+    inspection::{DEFAULT_MAX_BYTES_READ, FileInspection, inspect_file},
+    limits::Limits,
+    model::Diff,
+    report,
+};
 use rustyline::{DefaultEditor, config::Configurer, error::ReadlineError};
 
 #[derive(Default)]
@@ -16,9 +22,12 @@ struct Session {
     last_analysis: Option<LastAnalysis>,
 }
 
-struct LastAnalysis {
-    diff: Diff,
-    roots: Option<[PathBuf; 2]>,
+enum LastAnalysis {
+    DirectoryComparison {
+        diff: Diff,
+        roots: Option<[PathBuf; 2]>,
+    },
+    FileInspection(FileInspection),
 }
 
 pub fn run() -> ExitCode {
@@ -89,9 +98,14 @@ fn execute_command(
 
 fn show_last(session: &Session) {
     match session.last_analysis.as_ref() {
-        Some(last) => {
-            if let Err(error) = write_summary(&last.diff, "Last analysis.") {
+        Some(LastAnalysis::DirectoryComparison { diff, .. }) => {
+            if let Err(error) = write_summary(diff, "Last analysis.") {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
+            }
+        }
+        Some(LastAnalysis::FileInspection(inspection)) => {
+            if let Err(error) = write_inspection_summary(inspection, "Last inspection.") {
+                eprintln!("crucksware: failed to write inspection summary: {error}");
             }
         }
         None => println!("No analysis has been completed in this session."),
@@ -99,10 +113,66 @@ fn show_last(session: &Session) {
 }
 
 fn analyze(editor: &mut DefaultEditor, session: &mut Session) {
-    let Some(old) = prompt_root(editor, "Before rootfs: ") else {
+    println!("What do you want to do?\n  1. Inspect one input\n  2. Compare two directories");
+    match prompt_analysis_choice(editor) {
+        Some(AnalysisChoice::Inspect) => inspect_one(editor, session),
+        Some(AnalysisChoice::CompareDirectories) => compare_directories(editor, session),
+        None => {}
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AnalysisChoice {
+    Inspect,
+    CompareDirectories,
+}
+
+fn prompt_analysis_choice(editor: &mut DefaultEditor) -> Option<AnalysisChoice> {
+    match editor.readline("Choice: ") {
+        Ok(choice) => match choice.trim() {
+            "1" => Some(AnalysisChoice::Inspect),
+            "2" => Some(AnalysisChoice::CompareDirectories),
+            _ => {
+                eprintln!("crucksware: choose 1 or 2");
+                None
+            }
+        },
+        Err(ReadlineError::Interrupted) => {
+            println!();
+            eprintln!("crucksware: analysis cancelled");
+            None
+        }
+        Err(ReadlineError::Eof) => {
+            println!();
+            None
+        }
+        Err(error) => {
+            eprintln!("crucksware: could not read analysis choice: {error}");
+            None
+        }
+    }
+}
+
+fn inspect_one(editor: &mut DefaultEditor, session: &mut Session) {
+    let Some(path) = prompt_path(editor, "Input: ") else {
         return;
     };
-    let Some(new) = prompt_root(editor, "After rootfs: ") else {
+    match inspect_file(&path, DEFAULT_MAX_BYTES_READ) {
+        Ok(inspection) => {
+            session.last_analysis = Some(LastAnalysis::FileInspection(inspection));
+            if let Err(error) = write_inspection_summary(&inspection, "Inspection complete.") {
+                eprintln!("crucksware: failed to write inspection: {error}");
+            }
+        }
+        Err(error) => eprintln!("crucksware: inspection failed: {error}"),
+    }
+}
+
+fn compare_directories(editor: &mut DefaultEditor, session: &mut Session) {
+    let Some(old) = prompt_path(editor, "Before rootfs: ") else {
+        return;
+    };
+    let Some(new) = prompt_path(editor, "After rootfs: ") else {
         return;
     };
 
@@ -133,9 +203,10 @@ fn analyze(editor: &mut DefaultEditor, session: &mut Session) {
                     None
                 }
             };
-            session.last_analysis = Some(LastAnalysis { diff, roots });
-            if let Some(last) = session.last_analysis.as_ref()
-                && let Err(error) = write_summary(&last.diff, "Analysis complete.")
+            session.last_analysis = Some(LastAnalysis::DirectoryComparison { diff, roots });
+            if let Some(LastAnalysis::DirectoryComparison { diff, .. }) =
+                session.last_analysis.as_ref()
+                && let Err(error) = write_summary(diff, "Analysis complete.")
             {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
@@ -144,10 +215,10 @@ fn analyze(editor: &mut DefaultEditor, session: &mut Session) {
     }
 }
 
-fn prompt_root(editor: &mut DefaultEditor, prompt: &str) -> Option<PathBuf> {
+fn prompt_path(editor: &mut DefaultEditor, prompt: &str) -> Option<PathBuf> {
     match editor.readline(prompt) {
         Ok(path) if path.is_empty() => {
-            eprintln!("crucksware: rootfs path cannot be empty");
+            eprintln!("crucksware: input path cannot be empty");
             None
         }
         Ok(path) => Some(PathBuf::from(path)),
@@ -161,7 +232,7 @@ fn prompt_root(editor: &mut DefaultEditor, prompt: &str) -> Option<PathBuf> {
             None
         }
         Err(error) => {
-            eprintln!("crucksware: could not read rootfs path: {error}");
+            eprintln!("crucksware: could not read input path: {error}");
             None
         }
     }
@@ -209,13 +280,22 @@ fn write_summary(diff: &Diff, heading: &str) -> io::Result<()> {
     output.flush()
 }
 
+fn write_inspection_summary(inspection: &FileInspection, heading: &str) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    writeln!(output, "{heading}")?;
+    writeln!(output)?;
+    report::inspection::write_inspection(inspection, &mut output)?;
+    output.flush()
+}
+
 fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 { singular } else { plural }
 }
 
 fn print_help() {
     println!(
-        "Interactive commands:\n  anal         Compare two extracted rootfs directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest analysis as text, JSON, Markdown, or HTML\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
+        "Interactive commands:\n  anal         Inspect one input or compare two directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  report       Export the latest directory comparison as text, JSON, Markdown, or HTML\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
     );
 }
 

@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod input;
+pub mod inspection;
 pub mod limits;
 pub mod model;
 pub mod path;
