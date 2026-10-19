@@ -13,7 +13,7 @@ pub fn write_text(comparison: &FileComparison, output: &mut impl Write) -> io::R
     let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
     super::readable::write_text(&packet, output)?;
     output.write_all(b"\n")?;
-    writeln!(output, "Binary comparison")?;
+    writeln!(output, "File comparison")?;
     writeln!(
         output,
         "Old: {} ({} bytes)",
@@ -149,7 +149,7 @@ pub fn write_html(comparison: &FileComparison, output: &mut impl Write) -> io::R
     )?;
     super::readable::write_html(&packet, output)?;
     output.write_all(
-        b"<section aria-labelledby=\"summary-heading\">\n<h2 id=\"summary-heading\">Binary comparison</h2>\n<table class=\"summary\">\n<tbody>\n",
+        b"<section aria-labelledby=\"summary-heading\">\n<h2 id=\"summary-heading\">File comparison</h2>\n<table class=\"summary\">\n<tbody>\n",
     )?;
     write_html_row(output, "Old kind", kind_name(comparison.old_kind))?;
     write_html_row(output, "New kind", kind_name(comparison.new_kind))?;

@@ -61,7 +61,7 @@ pub(super) fn write_explanation(
     if let Some(path) = &record.path {
         writeln!(output, "Path: `{path}`")?;
     } else {
-        writeln!(output, "Path: binary comparison")?;
+        writeln!(output, "Path: file comparison")?;
     }
     writeln!(output, "Fact: {}", describe(&record.fact))
 }
@@ -97,6 +97,19 @@ fn overview_lines(totals: &EvidenceTotals) -> Vec<String> {
             plural(totals.structural_changes, "change", "changes")
         ));
     }
+    if totals.file_comparison_inputs > 0 {
+        lines.push(format!(
+            "File comparison: {} {}, {} semantic {}.",
+            totals.file_comparison_inputs,
+            plural(totals.file_comparison_inputs, "input", "inputs"),
+            totals.binary_semantic_changes,
+            plural(
+                totals.binary_semantic_changes,
+                "field change",
+                "field changes"
+            )
+        ));
+    }
     if totals.binary_files > 0 {
         lines.push(format!(
             "Binary analysis: {} {}, {} semantic {}.",
@@ -121,6 +134,7 @@ fn is_empty(totals: &EvidenceTotals) -> bool {
     totals.filesystem_entries == 0
         && totals.source_files == 0
         && totals.binary_semantic_changes == 0
+        && totals.file_comparison_inputs == 0
         && totals.eligible_records == 0
 }
 
@@ -160,7 +174,7 @@ fn write_markdown_highlights(packet: &EvidencePacket, output: &mut impl Write) -
         if let Some(path) = path {
             writeln!(output, "`{path}`")?;
         } else {
-            output.write_all(b"Binary comparison\n")?;
+            output.write_all(b"File comparison\n")?;
         }
         while index < shown && packet.records[index].path.as_deref() == path {
             let record = &packet.records[index];
@@ -189,7 +203,7 @@ fn write_html_highlights(packet: &EvidencePacket, output: &mut impl Write) -> io
             super::html::write_escaped(output, path)?;
             output.write_all(b"</code>\n")?;
         } else {
-            output.write_all(b"Binary comparison\n")?;
+            output.write_all(b"File comparison\n")?;
         }
         output.write_all(b"<ul>\n")?;
         while index < shown && packet.records[index].path.as_deref() == path {
@@ -208,10 +222,7 @@ fn write_html_record(record: &EvidenceRecord, output: &mut impl Write) -> io::Re
 }
 
 fn path_label(path: Option<&str>) -> String {
-    path.map_or_else(
-        || "Binary comparison".to_owned(),
-        |path| format!("`{path}`"),
-    )
+    path.map_or_else(|| "File comparison".to_owned(), |path| format!("`{path}`"))
 }
 
 fn write_omission_note(

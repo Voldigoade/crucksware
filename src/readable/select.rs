@@ -257,7 +257,7 @@ pub(super) fn select_file_comparison(
 
     let mut packet = EvidencePacket {
         totals: EvidenceTotals {
-            binary_files: 2,
+            file_comparison_inputs: 2,
             binary_semantic_changes: checked_count(comparison.semantic_changes.len())?,
             eligible_records: checked_count(eligible_records)?,
             ..EvidenceTotals::default()

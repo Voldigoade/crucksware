@@ -31,6 +31,7 @@ pub(crate) struct EvidenceTotals {
     pub(crate) filesystem_changes: u64,
     pub(crate) source_files: u64,
     pub(crate) binary_files: u64,
+    pub(crate) file_comparison_inputs: u64,
     pub(crate) structural_changes: u64,
     pub(crate) binary_semantic_changes: u64,
     pub(crate) eligible_records: u64,
