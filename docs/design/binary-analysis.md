@@ -36,11 +36,12 @@ features. It reports class, byte order, architecture, machine, file type, entry 
 sections, program segments, interpreter paths, dynamic dependencies, imports, exports,
 symbols, build ID, GNU stack executable flags, and GNU RELRO segment count when present.
 Section and symbol names are kept as bytes and escaped in text output. It does not make
-security verdicts or compare ELF files semantically. Dynamic library dependencies are
-read from program-header dynamic metadata, so sectionless ELF files can still report
-them. Imports, exports, and symbol tables currently require the corresponding section
-tables to be present. File-backed section and segment ranges are checked, and `PT_LOAD`
-and `PT_TLS` file sizes must not exceed their memory sizes.
+security verdicts. Matching ELF files compare normalized selected facts independently
+of exact byte comparison. Dynamic library dependencies are read from program-header
+dynamic metadata, so sectionless ELF files can still report them. Imports, exports, and
+symbol tables currently require the corresponding section tables to be present.
+File-backed section and segment ranges are checked, and `PT_LOAD` and `PT_TLS` file sizes
+must not exceed their memory sizes.
 
 The default maximum ELF file size is 64 MiB. Inspection limits extracted entries to
 100,000, each copied field to 4 KiB, and total copied names to 16 MiB. The parser crate

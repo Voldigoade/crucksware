@@ -233,22 +233,31 @@ fn qualified_name(
     let mut c_member = false;
     while let Some(node) = parent {
         c_member |= language == SourceLanguage::C && node.kind() == "struct_specifier";
-        let field = match (language, node.kind()) {
+        let scope = match (language, node.kind()) {
             (SourceLanguage::Rust, "mod_item" | "struct_item" | "enum_item" | "trait_item")
             | (
                 SourceLanguage::Cpp,
                 "namespace_definition" | "class_specifier" | "struct_specifier",
             )
             | (SourceLanguage::Python, "class_definition")
-            | (SourceLanguage::C, "struct_specifier") => Some("name"),
-            (SourceLanguage::Rust, "impl_item") => Some("type"),
+            | (SourceLanguage::C, "struct_specifier") => node
+                .child_by_field_name("name")
+                .and_then(|scope_node| node_text(scope_node, source)),
+            (SourceLanguage::Rust, "impl_item") => node
+                .child_by_field_name("type")
+                .and_then(|type_node| node_text(type_node, source))
+                .map(|type_name| {
+                    match node
+                        .child_by_field_name("trait")
+                        .and_then(|trait_node| node_text(trait_node, source))
+                    {
+                        Some(trait_name) => format!("<{type_name} as {trait_name}>"),
+                        None => type_name,
+                    }
+                }),
             _ => None,
         };
-        if let Some(field) = field
-            && let Some(scope) = node
-                .child_by_field_name(field)
-                .and_then(|scope_node| node_text(scope_node, source))
-        {
+        if let Some(scope) = scope {
             scopes.push(scope);
         }
         parent = node.parent();
@@ -530,5 +539,52 @@ mod tests {
 
         assert_eq!(status, StructuralStatus::SyntaxErrors);
         assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn trait_implementation_methods_keep_trait_identity() {
+        let path = RelPath::new(b"src/lib.rs".to_vec()).unwrap();
+        let mut analyzer = Analyzer::new();
+
+        let (status, changes) = analyzer
+            .compare(
+                SourceLanguage::Rust,
+                "trait First { fn run(&self); }\nstruct Item;\nimpl First for Item { fn run(&self) {} }",
+                "trait Second { fn run(&self); }\nstruct Item;\nimpl Second for Item { fn run(&self) {} }",
+                &path,
+            )
+            .unwrap();
+
+        assert_eq!(status, StructuralStatus::Complete);
+        assert!(changes.iter().any(|change| {
+            change.action == StructuralAction::Removed
+                && change.name == "<Item as First>::run"
+                && change.before_signature.is_some()
+        }));
+        assert!(changes.iter().any(|change| {
+            change.action == StructuralAction::Added
+                && change.name == "<Item as Second>::run"
+                && change.after_signature.is_some()
+        }));
+    }
+
+    #[test]
+    fn fact_extraction_stops_at_the_syntax_node_limit() {
+        let path = RelPath::new(b"large.rs".to_vec()).unwrap();
+        let source = "fn item() {}\n".repeat(MAX_SOURCE_NODES / 4);
+        let mut analyzer = Analyzer::new();
+
+        let error = analyzer
+            .compare(SourceLanguage::Rust, "", &source, &path)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DiffError::LimitExceeded {
+                resource: crate::error::Resource::SourceNodes,
+                limit,
+            }
+                if limit == MAX_SOURCE_NODES as u64
+        ));
     }
 }
