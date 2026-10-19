@@ -7,6 +7,8 @@ use std::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use crucksware::{compare, limits::Limits, model::Diff, report};
 
+mod interactive;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "crucksware",
@@ -69,6 +71,10 @@ enum OutputFormat {
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().nth(1).is_none() {
+        return interactive::run();
+    }
+
     let cli = Cli::parse();
     match cli.command {
         Command::Compare(args) => run_compare(args),
