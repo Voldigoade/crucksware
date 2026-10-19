@@ -98,6 +98,9 @@ hints only. Changed text with an unsupported extension still receives a determin
 line diff. A supported file with syntax errors also keeps its line diff, while structural
 changes are omitted and marked `syntax_errors`. Binary files are not parsed as source;
 a transition between text and binary content is reported without an invented line diff.
+The source pass requires the full file to be valid UTF-8. Generic input detection checks
+only a bounded sample, so a large file with invalid bytes after that sample can receive a
+different text classification in the generic and source-aware result sections.
 Structural facts include definitions, normalized function or method signatures, and
 imports. Ordering is normalized for deterministic output. These facts do not describe
 control flow, runtime behavior, intent, or behavioral equivalence.
