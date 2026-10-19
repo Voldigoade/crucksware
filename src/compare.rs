@@ -7,7 +7,8 @@ use crate::{
     model::{Category, Change, ChangedField, Diff, Entry, Snapshot},
     progress::{ProgressEvent, ProgressPhase, emit},
     scan::{revalidate_with_progress, scan_with_progress},
-    source::{SourceDiff, analyze_changes},
+    semantic_tree::{SemanticTreeDiff, analyze_binary_changes},
+    source::analyze_changes,
 };
 
 /// Compares extracted Linux trees that remain stable for the entire operation.
@@ -66,12 +67,13 @@ where
     })
 }
 
-pub fn compare_source(
+pub fn compare_semantic_tree(
     old: &Path,
     new: &Path,
     limits: Limits,
     max_source_file_bytes: u64,
-) -> Result<SourceDiff, DiffError> {
+) -> Result<SemanticTreeDiff, DiffError> {
+    let max_entries = limits.max_entries;
     let mut run = run_comparison(old, new, limits, None::<fn(ProgressEvent)>)?;
     let source_changes = analyze_changes(
         &run.diff,
@@ -80,12 +82,21 @@ pub fn compare_source(
         &mut run.budget,
         max_source_file_bytes,
     )?;
+    let binary_changes = analyze_binary_changes(
+        &run.diff,
+        &run.old,
+        &run.new,
+        &source_changes,
+        &mut run.budget,
+        max_entries,
+    )?;
     let mut no_progress = None::<fn(ProgressEvent)>;
     revalidate_with_progress(&run.old, Side::Old, &mut no_progress)?;
     revalidate_with_progress(&run.new, Side::New, &mut no_progress)?;
-    Ok(SourceDiff {
+    Ok(SemanticTreeDiff {
         filesystem: run.diff,
         source_changes,
+        binary_changes,
     })
 }
 

@@ -19,7 +19,7 @@ mod content;
 mod compare;
 
 #[cfg(target_os = "linux")]
-pub use compare::{compare, compare_source, compare_with_progress};
+pub use compare::{compare, compare_semantic_tree, compare_with_progress};
 
 #[cfg(not(target_os = "linux"))]
 pub fn compare(
@@ -44,14 +44,15 @@ where
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn compare_source(
+pub fn compare_semantic_tree(
     _old: &std::path::Path,
     _new: &std::path::Path,
     _limits: limits::Limits,
     _max_source_file_bytes: u64,
-) -> Result<source::SourceDiff, error::DiffError> {
+) -> Result<semantic_tree::SemanticTreeDiff, error::DiffError> {
     Err(error::DiffError::UnsupportedPlatform)
 }
 
 pub mod report;
+pub mod semantic_tree;
 pub mod source;

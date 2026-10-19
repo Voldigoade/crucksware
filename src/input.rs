@@ -27,6 +27,18 @@ pub enum InputKind {
     UnknownBinary,
 }
 
+impl InputKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Directory => "directory",
+            Self::Elf => "elf",
+            Self::Pe => "pe",
+            Self::Text => "text",
+            Self::UnknownBinary => "unknown_binary",
+        }
+    }
+}
+
 impl fmt::Display for InputKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -204,7 +216,25 @@ pub(crate) fn detect_input_bounded(
         });
     }
 
-    let mut file = open_input_file(path).map_err(|source| input_io("open input", path, source))?;
+    let expected_stamp = InputStamp::from_metadata(&metadata);
+    let file = open_input_file(path).map_err(|source| input_io("open input", path, source))?;
+    detect_open_file_bounded_from_stamp(path, file, max_bytes_read, Some(&expected_stamp))
+}
+
+pub(crate) fn detect_open_file_bounded(
+    path: &Path,
+    file: File,
+    max_bytes_read: u64,
+) -> Result<InputDetection, InputError> {
+    detect_open_file_bounded_from_stamp(path, file, max_bytes_read, None)
+}
+
+fn detect_open_file_bounded_from_stamp(
+    path: &Path,
+    mut file: File,
+    max_bytes_read: u64,
+    expected_stamp: Option<&InputStamp>,
+) -> Result<InputDetection, InputError> {
     let opened_metadata = file
         .metadata()
         .map_err(|source| input_io("inspect open input", path, source))?;
@@ -214,7 +244,14 @@ pub(crate) fn detect_input_bounded(
         });
     }
     let stamp = InputStamp::from_metadata(&opened_metadata);
-    if stamp != InputStamp::from_metadata(&metadata) {
+    if expected_stamp.is_some_and(|expected| expected != &stamp) {
+        return Err(InputError::Changed {
+            path: path.to_path_buf(),
+        });
+    }
+    let path_metadata =
+        fs::metadata(path).map_err(|source| input_io("inspect input", path, source))?;
+    if stamp != InputStamp::from_metadata(&path_metadata) {
         return Err(InputError::Changed {
             path: path.to_path_buf(),
         });
@@ -431,6 +468,24 @@ mod tests {
         fs::rename(replacement, &path).unwrap();
 
         let error = revalidate_input_file(&file, &path, &stamp).unwrap_err();
+
+        assert!(matches!(error, InputError::Changed { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detection_rejects_a_file_replaced_between_initial_stat_and_open() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("input");
+        let replacement = temporary.path().join("replacement");
+        fs::write(&path, b"old").unwrap();
+        let expected = InputStamp::from_metadata(&fs::metadata(&path).unwrap());
+        fs::write(&replacement, b"new").unwrap();
+        fs::rename(replacement, &path).unwrap();
+        let file = open_input_file(&path).unwrap();
+
+        let error = detect_open_file_bounded_from_stamp(&path, file, u64::MAX, Some(&expected))
+            .unwrap_err();
 
         assert!(matches!(error, InputError::Changed { .. }));
     }
