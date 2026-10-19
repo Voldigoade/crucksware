@@ -1,9 +1,318 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Voldigoade/crucksware/blob/main/docs/json/schema-2.json",
+  "$id": "https://raw.githubusercontent.com/Voldigoade/crucksware/main/docs/json/schema-2.json",
   "title": "Crucksware file comparison report",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "uint64DecimalString": {
+      "description": "Unsigned 64-bit facts use decimal strings to preserve exact values in consumers with limited integer precision.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "semanticChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "field": {
+          "type": "string",
+          "enum": [
+            "architecture",
+            "byte_order",
+            "build_id",
+            "certificate_table",
+            "class",
+            "dependencies",
+            "delay_imports",
+            "entry_point",
+            "entry_point_rva",
+            "exports",
+            "format",
+            "gnu_relro_segments",
+            "gnu_stack_executable",
+            "image_base",
+            "imports",
+            "interpreters",
+            "machine",
+            "pdb_info",
+            "resources",
+            "sections",
+            "segments",
+            "subsystem",
+            "symbols",
+            "type"
+          ]
+        },
+        "before": {
+          "type": [
+            "array",
+            "boolean",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        },
+        "after": {
+          "type": [
+            "array",
+            "boolean",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "const": "entry_point"
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "$ref": "#/$defs/uint64DecimalString"
+              },
+              "after": {
+                "$ref": "#/$defs/uint64DecimalString"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "const": "image_base"
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "$ref": "#/$defs/uint64DecimalString"
+              },
+              "after": {
+                "$ref": "#/$defs/uint64DecimalString"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "const": "gnu_relro_segments"
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "$ref": "#/$defs/uint64DecimalString"
+              },
+              "after": {
+                "$ref": "#/$defs/uint64DecimalString"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "const": "sections"
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "virtual_address": {
+                      "type": "integer"
+                    },
+                    "virtual_size": {
+                      "type": "integer"
+                    },
+                    "raw_offset": {
+                      "type": "integer"
+                    },
+                    "raw_size": {
+                      "type": "integer"
+                    },
+                    "characteristics": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "after": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "virtual_address": {
+                      "type": "integer"
+                    },
+                    "virtual_size": {
+                      "type": "integer"
+                    },
+                    "raw_offset": {
+                      "type": "integer"
+                    },
+                    "raw_size": {
+                      "type": "integer"
+                    },
+                    "characteristics": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "const": "segments"
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offset": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "virtual_address": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "file_size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "memory_size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    }
+                  }
+                }
+              },
+              "after": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offset": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "virtual_address": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "file_size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "memory_size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "field": {
+                "const": "symbols"
+              }
+            },
+            "required": [
+              "field"
+            ]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    }
+                  }
+                }
+              },
+              "after": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/uint64DecimalString"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
   "required": [
     "schema_version",
     "analysis_type",
@@ -23,10 +332,20 @@
       "const": "file_comparison"
     },
     "old_kind": {
-      "enum": ["ELF", "PE", "text", "unknown binary"]
+      "enum": [
+        "ELF",
+        "PE",
+        "text",
+        "unknown binary"
+      ]
     },
     "new_kind": {
-      "enum": ["ELF", "PE", "text", "unknown binary"]
+      "enum": [
+        "ELF",
+        "PE",
+        "text",
+        "unknown binary"
+      ]
     },
     "old_size_bytes": {
       "type": "string",
@@ -40,25 +359,16 @@
       "type": "boolean"
     },
     "semantic_status": {
-      "enum": ["compared", "format_mismatch", "unsupported"]
+      "enum": [
+        "compared",
+        "format_mismatch",
+        "unsupported"
+      ]
     },
     "semantic_changes": {
       "type": "array",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["field", "before", "after"],
-        "properties": {
-          "field": {
-            "type": "string"
-          },
-          "before": {
-            "type": ["array", "boolean", "null", "number", "object", "string"]
-          },
-          "after": {
-            "type": ["array", "boolean", "null", "number", "object", "string"]
-          }
-        }
+        "$ref": "#/$defs/semanticChange"
       }
     }
   }

@@ -72,7 +72,7 @@ fn elf_facts(elf: &ElfInspection) -> BTreeMap<String, Value> {
     facts.insert("architecture".to_owned(), json!(elf.architecture));
     facts.insert("machine".to_owned(), json!(elf.machine));
     facts.insert("type".to_owned(), json!(elf.elf_type));
-    facts.insert("entry_point".to_owned(), json!(elf.entry_point));
+    facts.insert("entry_point".to_owned(), json!(elf.entry_point.to_string()));
 
     let mut sections: Vec<_> = elf
         .sections
@@ -82,8 +82,8 @@ fn elf_facts(elf: &ElfInspection) -> BTreeMap<String, Value> {
                 "name": encode_bytes(&section.name),
                 "type": section.section_type,
                 "flags": section.flags,
-                "address": section.address,
-                "size": section.size,
+                "address": section.address.to_string(),
+                "size": section.size.to_string(),
             })
         })
         .collect();
@@ -97,10 +97,10 @@ fn elf_facts(elf: &ElfInspection) -> BTreeMap<String, Value> {
             json!({
                 "type": segment.segment_type,
                 "flags": segment.flags,
-                "offset": segment.offset,
-                "virtual_address": segment.virtual_address,
-                "file_size": segment.file_size,
-                "memory_size": segment.memory_size,
+                "offset": segment.offset.to_string(),
+                "virtual_address": segment.virtual_address.to_string(),
+                "file_size": segment.file_size.to_string(),
+                "memory_size": segment.memory_size.to_string(),
             })
         })
         .collect();
@@ -141,8 +141,8 @@ fn elf_facts(elf: &ElfInspection) -> BTreeMap<String, Value> {
                 "name": encode_bytes(&symbol.name),
                 "binding": symbol.binding,
                 "type": symbol.symbol_type,
-                "value": symbol.value,
-                "size": symbol.size,
+                "value": symbol.value.to_string(),
+                "size": symbol.size.to_string(),
             })
         })
         .collect();
@@ -158,7 +158,7 @@ fn elf_facts(elf: &ElfInspection) -> BTreeMap<String, Value> {
     facts.insert("gnu_stack_executable".to_owned(), json!(gnu_stack));
     facts.insert(
         "gnu_relro_segments".to_owned(),
-        json!(elf.gnu_relro_segments),
+        json!(elf.gnu_relro_segments.to_string()),
     );
     facts
 }
@@ -169,7 +169,7 @@ fn pe_facts(pe: &PeInspection) -> BTreeMap<String, Value> {
     facts.insert("architecture".to_owned(), json!(pe.architecture));
     facts.insert("machine".to_owned(), json!(pe.machine));
     facts.insert("entry_point_rva".to_owned(), json!(pe.entry_point_rva));
-    facts.insert("image_base".to_owned(), json!(pe.image_base));
+    facts.insert("image_base".to_owned(), json!(pe.image_base.to_string()));
     facts.insert("subsystem".to_owned(), json!(pe.subsystem));
 
     let mut sections: Vec<_> = pe

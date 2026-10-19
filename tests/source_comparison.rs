@@ -523,6 +523,34 @@ fn source_mode_combines_source_and_elf_analysis_for_a_mixed_tree() {
 }
 
 #[test]
+fn source_mode_json_preserves_wide_binary_facts_as_decimal_strings() {
+    let (_temporary, old, new) = roots();
+    fs::create_dir_all(old.join("bin")).unwrap();
+    fs::create_dir_all(new.join("bin")).unwrap();
+    let old_entry = 9_007_199_254_740_993_u64;
+    fs::write(old.join("bin/program"), common::minimal_elf64(old_entry)).unwrap();
+    fs::write(
+        new.join("bin/program"),
+        common::minimal_elf64(old_entry + 1),
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = report["binary_changes"][0]["semantic_changes"]
+        .as_array()
+        .unwrap();
+    let entry_point = changes
+        .iter()
+        .find(|change| change["field"] == "entry_point")
+        .unwrap();
+    assert_eq!(entry_point["before"], old_entry.to_string());
+    assert_eq!(entry_point["after"], (old_entry + 1).to_string());
+}
+
+#[test]
 fn source_mode_adds_pe_semantics_to_a_mixed_tree() {
     let (_temporary, old, new) = roots();
     fs::create_dir_all(old.join("bin")).unwrap();

@@ -108,8 +108,8 @@ fn semantic_tree_json_encodes_binary_paths_and_preserves_large_sizes() {
             semantic_status: BinaryAnalysisStatus::Compared,
             semantic_changes: vec![SemanticChange {
                 field: "entry_point".to_owned(),
-                before: serde_json::json!(4096_u64),
-                after: serde_json::json!(8192_u64),
+                before: serde_json::json!("4096"),
+                after: serde_json::json!("8192"),
             }],
         }],
     };
@@ -123,8 +123,8 @@ fn semantic_tree_json_encodes_binary_paths_and_preserves_large_sizes() {
     assert_eq!(binary["path"], "usr/bin/a%09b");
     assert_eq!(binary["old_size_bytes"], u64::MAX.to_string());
     assert_eq!(binary["new_size_bytes"], u64::MAX.to_string());
-    assert_eq!(binary["semantic_changes"][0]["before"], 4096);
-    assert_eq!(binary["semantic_changes"][0]["after"], 8192);
+    assert_eq!(binary["semantic_changes"][0]["before"], "4096");
+    assert_eq!(binary["semantic_changes"][0]["after"], "8192");
 
     let schema: serde_json::Value =
         serde_json::from_str(include_str!("../../../docs/json/schema-4.json")).unwrap();
@@ -139,6 +139,11 @@ fn semantic_tree_json_encodes_binary_paths_and_preserves_large_sizes() {
             .unwrap()
             .len(),
         4
+    );
+    assert_eq!(
+        schema["properties"]["binary_changes"]["items"]["properties"]["semantic_changes"]["items"]
+            ["$ref"],
+        "schema-2.json#/$defs/semanticChange"
     );
     assert_eq!(output.last(), Some(&b'\n'));
 }
