@@ -44,6 +44,25 @@ fn shell_exits_normally_at_end_of_input() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn clear_is_silent_without_a_terminal_and_quit_exits_the_shell() {
+    let output = run_shell(b"clear\nhelp\nquit\nhelp\n");
+    let without_clear = run_shell(b"help\nquit\n");
+
+    assert!(output.status.success());
+    assert!(without_clear.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("shell output is UTF-8");
+    assert_eq!(
+        stdout.strip_prefix("crucksware > ").unwrap().as_bytes(),
+        without_clear.stdout
+    );
+    assert_eq!(output.stderr, without_clear.stderr);
+    assert!(stdout.contains("crucksware >"));
+    assert_eq!(stdout.matches("Interactive commands:").count(), 1);
+    assert!(!stdout.contains('\u{1b}'));
+    assert!(output.stderr.is_empty());
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn anal_prompts_for_paths_with_spaces_and_reports_the_real_comparison() {
@@ -339,6 +358,33 @@ fn report_requires_confirmation_before_overwriting_an_existing_file() {
     assert_eq!(std::fs::read(&report_path).unwrap(), b"keep this report");
     assert!(String::from_utf8_lossy(&output.stdout).contains("Report export cancelled."));
     assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_rejects_a_directory_destination_without_changing_it() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let destination = temporary.path().join("report directory");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::create_dir(&destination).expect("report destination directory is created");
+
+    let input = format!(
+        "anal\n{}\n{}\nreport text {}\nexit\n",
+        old.display(),
+        new.display(),
+        destination.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Report written."));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not a regular file"));
+    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 0);
+    assert_eq!(std::fs::read_dir(&old).unwrap().count(), 0);
+    assert_eq!(std::fs::read_dir(&new).unwrap().count(), 0);
 }
 
 #[cfg(target_os = "linux")]
