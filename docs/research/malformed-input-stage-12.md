@@ -18,13 +18,9 @@ The mutation tests accept either a complete inspection or a typed input error. A
 panic fails the test. They add no runtime dependency and do not rely on external corpus
 files.
 
-## Release mutation campaign
+## Deterministic release mutation campaign
 
-`cargo fuzz` is not installed in the available environment, and only the stable Rust
-toolchain is installed. A temporary deterministic mutation runner therefore exercised the
-release CLI without adding fuzzing dependencies or repository tooling.
-
-The campaign analyzed 10,443 generated inputs:
+A deterministic mutation runner exercised the release CLI with 10,443 generated inputs:
 
 - 4,096 mutations of a valid minimal ELF header
 - 4,096 mutations of a valid PE32+ image
@@ -35,8 +31,28 @@ The campaign analyzed 10,443 generated inputs:
 Each input was passed to `inspect --format json` with a two-second per-input timeout.
 There were 6,371 successful inspections and 4,072 input errors. No process crashed or
 timed out, no panic text appeared, and input errors emitted no partial stdout. The full
-campaign took 12.70 seconds on the measurement machine. This is deterministic mutation
-testing, not coverage-guided fuzzing.
+campaign took 12.70 seconds on the measurement machine.
 
-The campaign found no reproducible parser defect. It does not prove parser safety and
-does not replace future coverage-guided fuzzing under sanitizers.
+## Coverage-guided fuzz campaigns
+
+Two `cargo-fuzz` targets call the public file-inspection and binary-comparison APIs.
+Both use `libfuzzer-sys` with AddressSanitizer and sanitizer coverage. Inputs are written
+to temporary files, capped at 1 MiB, and processed with a 4,096-entry limit. Seed corpora
+contain minimal ELF and PE files, truncated format candidates, and unknown binary data.
+Generated corpus entries were kept under `/tmp`; only the initial synthetic seeds are
+tracked.
+
+Campaigns ran on Ubuntu 26.04.1 LTS, x86_64, Linux 7.0.0-38-generic, with
+`rustc 1.101.0-nightly (b6eeb93c9 2026-10-18)`, `cargo-fuzz 0.13.2`, and
+`libfuzzer-sys 0.4.13`. Each target ran for 60 seconds with a two-second per-input
+timeout and a 1 MiB maximum input length.
+
+| Target | Executions | Average executions/s | New corpus units | Peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| `inspect_file` | 1,722,802 | 28,242 | 1,634 | 494 MiB |
+| `compare_files` | 743,827 | 12,193 | 1,469 | 463 MiB |
+
+Neither campaign reported a crash, timeout, sanitizer finding, or crash artifact. The
+earlier deterministic release mutation campaign and the persistent malformed-input tests
+remain in place. These bounded runs provide evidence for the tested build and seeds; they
+do not prove parser safety or replace longer campaigns and testing on other architectures.

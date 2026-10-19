@@ -1,0 +1,31 @@
+[package]
+name = "crucksware-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+crucksware = { path = ".." }
+libfuzzer-sys = "0.4"
+tempfile = "3.27.0"
+
+[[bin]]
+name = "inspect_file"
+path = "fuzz_targets/inspect_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compare_files"
+path = "fuzz_targets/compare_files.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+resolver = "3"
