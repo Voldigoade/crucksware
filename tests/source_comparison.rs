@@ -494,6 +494,30 @@ fn source_mode_reports_added_binary_as_one_sided_inspection() {
 }
 
 #[test]
+fn source_mode_shares_the_read_budget_with_binary_inspection() {
+    let (_temporary, old, new) = roots();
+    fs::create_dir_all(old.join("bin")).unwrap();
+    fs::create_dir_all(new.join("bin")).unwrap();
+    fs::write(new.join("bin/program"), common::minimal_elf64(0x401000)).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_crucksware"))
+        .args([
+            "compare",
+            "--source-aware",
+            "--format=json",
+            "--max-bytes-read=64",
+        ])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("bytes read limit exceeded"));
+}
+
+#[test]
 fn source_mode_requires_directories_and_produces_no_report_for_file_inputs() {
     let (_temporary, old, new) = roots();
     let old_file = old.join("file");
