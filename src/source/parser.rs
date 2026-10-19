@@ -125,6 +125,7 @@ fn parse(
     )?;
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, root, source.as_bytes());
+    let mut seen_definitions = BTreeSet::new();
     while let Some(query_match) = matches.next() {
         let mut name = None;
         let mut definition = None;
@@ -147,6 +148,10 @@ fn parse(
         let Some(mut kind) = kind_from_definition(tag_kind, definition_node, name_node) else {
             continue;
         };
+        let member = is_member(language, definition_node);
+        if language == SourceLanguage::Rust && kind == StructuralKind::Method && !member {
+            continue;
+        }
         let Some(name_text) = node_text(name_node, source) else {
             continue;
         };
@@ -155,8 +160,11 @@ fn parse(
         if language == SourceLanguage::C && is_c_member {
             continue;
         }
-        if matches!(kind, StructuralKind::Function) && is_member(language, definition_node) {
+        if kind == StructuralKind::Function && member {
             kind = StructuralKind::Method;
+        }
+        if !seen_definitions.insert(name_node.id()) {
+            continue;
         }
         insert_fact(
             &mut facts,
