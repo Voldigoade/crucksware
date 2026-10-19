@@ -107,3 +107,19 @@ the container does not permit LeakSanitizer's required ptrace access.
 
 Neither campaign reported a crash, timeout, AddressSanitizer finding, or crash artifact.
 These runs cover the tested build and seeds only and do not prove parser safety.
+
+## Source-fact matching requalification
+
+After replacing repeated signature searches with a sorted multiset merge, the
+`source_analysis` target was rerun against commit
+`f48ef394d1451b529ee3f767f1a2a8529044714a`. It used the two tracked synthetic seeds,
+a 60-second campaign, a two-second per-input timeout, a 256 KiB maximum input, and
+AddressSanitizer with leak detection disabled for the container limitation described
+above.
+
+The campaign completed 4,380 executions in 61 seconds, averaging 71 executions per
+second. The corpus grew from two seed files to 164 files and peak RSS was 384 MiB. No
+crash, timeout, AddressSanitizer finding, or crash artifact occurred. The run used
+Ubuntu 26.04.1 LTS, x86_64, Linux 7.0.0-38-generic, `rustc 1.101.0-nightly
+(b6eeb93c9 2026-10-18)`, `cargo-fuzz 0.13.2`, and Clang 21.1.8. This bounded run
+provides evidence for the tested build and corpus; it does not prove parser safety.
