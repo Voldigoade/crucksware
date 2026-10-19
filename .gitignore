@@ -1,2 +1,4 @@
 /target/
+/fuzz/target/
+/fuzz/artifacts/
 /.worktrees/
