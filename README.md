@@ -42,15 +42,20 @@ omitted and asks before replacing an existing file. It does not save analysis hi
 automatically. Report destinations inside either compared rootfs, symbolic-link
 destinations, and existing files with multiple hard links are refused.
 Replacing any existing report is also refused on non-Unix platforms because stable
-standard APIs do not expose the hard-link count there. Keep the compared trees and report
-directory stable while a command runs; path-based operations do not contain hostile
+standard APIs do not expose the hard-link count there. Reports are rendered to a temporary
+file in the destination directory before publication. A failed render or write leaves an
+existing report unchanged and does not publish a new destination. New destinations use
+no-clobber publication. The temporary-file library does not guarantee atomic publication
+on every platform or filesystem; it generally is atomic on modern Linux filesystems. A
+process interruption may leave a temporary file behind. Keep the compared trees and
+report directory stable while a command runs; path-based operations do not contain hostile
 concurrent directory replacement.
 
 ## Development
 
 Install stable Rust with rustfmt and Clippy. The CLI uses clap; JSON output uses Serde
-and serde_json. Tests use `tempfile`. The lockfile is committed, and CI uses stable Rust
-on Linux.
+and serde_json. Report files are published through `tempfile`. The lockfile is committed,
+and CI uses stable Rust on Linux.
 
 ```sh
 cargo fmt --check
