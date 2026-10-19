@@ -140,6 +140,44 @@ fn anal_compares_two_files_and_last_shows_byte_and_semantic_summary() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn anal_compares_large_files_with_the_pair_comparison_budget() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old executable");
+    let new = temporary.path().join("new executable");
+    let mut old_contents = vec![0; 64];
+    old_contents[..4].copy_from_slice(b"\x7fELF");
+    old_contents[4] = 2;
+    old_contents[5] = 1;
+    old_contents[6] = 1;
+    old_contents[16..18].copy_from_slice(&3_u16.to_le_bytes());
+    old_contents[18..20].copy_from_slice(&62_u16.to_le_bytes());
+    old_contents[20..24].copy_from_slice(&1_u32.to_le_bytes());
+    old_contents[24..32].copy_from_slice(&0x401000_u64.to_le_bytes());
+    old_contents[52..54].copy_from_slice(&64_u16.to_le_bytes());
+    old_contents[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    old_contents[58..60].copy_from_slice(&64_u16.to_le_bytes());
+    old_contents.resize(20 * 1024 * 1024, 0);
+    let mut new_contents = old_contents.clone();
+    *new_contents.last_mut().unwrap() = 1;
+    std::fs::write(&old, old_contents).expect("old ELF is written");
+    std::fs::write(&new, new_contents).expect("new ELF is written");
+
+    let input = format!("anal\n2\n{}\n{}\nexit\n", old.display(), new.display());
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("File comparison complete."),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("Byte-level changed: yes"));
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn anal_can_select_source_aware_directory_comparison() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old project");
