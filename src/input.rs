@@ -65,8 +65,16 @@ pub enum InputError {
 pub(crate) struct InputDetection {
     pub kind: InputKind,
     pub size_bytes: Option<u64>,
+    pub bytes_read: u64,
     pub file: Option<File>,
     pub sample: Vec<u8>,
+    pub pe_signature_probe: Option<PeSignatureProbe>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PeSignatureProbe {
+    pub offset: u64,
+    pub bytes: [u8; PE_SIGNATURE.len()],
 }
 
 impl fmt::Display for InputError {
@@ -137,8 +145,10 @@ pub(crate) fn detect_input_bounded(
         return Ok(InputDetection {
             kind: InputKind::Directory,
             size_bytes: None,
+            bytes_read: 0,
             file: None,
             sample: Vec::new(),
+            pe_signature_probe: None,
         });
     }
     if !metadata.is_file() {
@@ -171,18 +181,20 @@ pub(crate) fn detect_input_bounded(
         return Ok(InputDetection {
             kind: InputKind::Elf,
             size_bytes: Some(metadata.len()),
+            bytes_read: sample_len as u64,
             file: Some(file),
             sample: sample.to_vec(),
+            pe_signature_probe: None,
         });
     }
 
-    let bytes_read = sample_len as u64;
+    let mut bytes_read = sample_len as u64;
     if let Some(offset) = pe_signature_offset(sample, metadata.len()) {
-        let signature = if let Ok(start) = usize::try_from(offset)
+        let (signature, probe) = if let Ok(start) = usize::try_from(offset)
             && let Some(end) = start.checked_add(PE_SIGNATURE.len())
             && let Some(signature) = sample.get(start..end)
         {
-            signature == PE_SIGNATURE
+            (signature == PE_SIGNATURE, None)
         } else {
             let total = bytes_read.checked_add(PE_SIGNATURE.len() as u64).ok_or(
                 InputError::LimitExceeded {
@@ -196,19 +208,22 @@ pub(crate) fn detect_input_bounded(
                     limit: max_bytes_read,
                 });
             }
+            bytes_read = total;
             file.seek(SeekFrom::Start(offset))
                 .map_err(|source| input_io("read PE signature", path, source))?;
             let mut signature = [0; PE_SIGNATURE.len()];
             file.read_exact(&mut signature)
                 .map_err(|source| input_io("read PE signature", path, source))?;
-            signature == *PE_SIGNATURE
+            (signature == *PE_SIGNATURE, Some(signature))
         };
         if signature {
             return Ok(InputDetection {
                 kind: InputKind::Pe,
                 size_bytes: Some(metadata.len()),
+                bytes_read,
                 file: Some(file),
                 sample: sample.to_vec(),
+                pe_signature_probe: probe.map(|bytes| PeSignatureProbe { offset, bytes }),
             });
         }
     }
@@ -235,8 +250,10 @@ pub(crate) fn detect_input_bounded(
     Ok(InputDetection {
         kind,
         size_bytes: Some(metadata.len()),
+        bytes_read,
         file: Some(file),
         sample: sample.to_vec(),
+        pe_signature_probe: None,
     })
 }
 

@@ -73,8 +73,8 @@ fn pe_signature_outside_the_sample_uses_the_remaining_read_budget() {
     contents[8_192..].copy_from_slice(b"PE\0\0");
     fs::write(&path, contents).unwrap();
 
-    let inspection = inspect_file(&path, 8_196).unwrap();
-    assert_eq!(inspection.kind, InputKind::Pe);
+    let error = inspect_file(&path, 8_196).unwrap_err();
+    assert!(error.to_string().contains("invalid PE input"));
 
     let error = inspect_file(&path, 8_195).unwrap_err();
     assert!(error.to_string().contains("bytes read limit exceeded"));
