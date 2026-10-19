@@ -1,0 +1,9 @@
+fn baseline() {}
+
+struct Device {
+    id: u64,
+}
+
+impl Device {
+    fn start(&self) {}
+}
