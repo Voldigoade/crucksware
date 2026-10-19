@@ -219,17 +219,13 @@ fn source_mode_reports_rust_method_signature_changes() {
 
     assert_eq!(output.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        report["source_changes"][0]["structural_changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| {
-                change["action"] == "signature_changed"
-                    && change["kind"] == "method"
-                    && change["name"] == "Auth::login"
-            })
-    );
+    let structural_changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(structural_changes.len(), 1);
+    assert_eq!(structural_changes[0]["action"], "signature_changed");
+    assert_eq!(structural_changes[0]["kind"], "method");
+    assert_eq!(structural_changes[0]["name"], "Auth::login");
 }
 
 #[test]
@@ -246,16 +242,22 @@ fn source_mode_preserves_rust_module_scope_and_function_kind() {
 
     assert_eq!(output.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let structural_changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(structural_changes.len(), 2);
+    assert!(structural_changes.iter().any(|change| {
+        change["action"] == "removed"
+            && change["kind"] == "function"
+            && change["name"] == "net::check"
+    }));
+    assert!(structural_changes.iter().any(|change| {
+        change["action"] == "removed" && change["kind"] == "module" && change["name"] == "net"
+    }));
     assert!(
-        report["source_changes"][0]["structural_changes"]
-            .as_array()
-            .unwrap()
+        !structural_changes
             .iter()
-            .any(|change| {
-                change["action"] == "removed"
-                    && change["kind"] == "function"
-                    && change["name"] == "net::check"
-            })
+            .any(|change| change["kind"] == "method")
     );
 }
 
