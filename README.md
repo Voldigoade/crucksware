@@ -5,8 +5,10 @@ Semantic firmware diff and triage in Rust.
 **Experimental and under active development.** Linux comparison of two extracted root
 filesystem directories is implemented, including exact bounded regular-file comparison
 and filesystem metadata. The direct CLI provides deterministic text and JSON schema v1
-reports, plus bounded single-file inspection. ELF and PE inputs receive static structural
-facts; unknown files receive only basic type, size, and text/binary facts.
+reports for directory comparisons, plus bounded single-file inspection and exact file
+comparison. ELF and PE file pairs receive normalized structural comparisons and separate
+byte-level results. Other regular files receive exact byte comparison without semantic
+claims.
 The interactive shell adds session summaries and text, JSON, Markdown, and offline HTML
 exports with live progress.
 
@@ -17,13 +19,14 @@ filesystem-managed access times.
 
 Crucksware is a focused, local tool for firmware analysts, embedded engineers, reverse
 engineers, and defensive security researchers. It does not extract firmware images or
-semantically compare binary formats. Input files are never executed. Direct SquashFS
-input and source-language analysis are not implemented.
+analyze source-language structure. Input files are never executed. Direct SquashFS input
+is not implemented.
 
 ## Design
 
 The [v0.1 design](docs/design/v0.1.md) defines the comparison and report contract,
-including the [JSON schema](docs/json/schema-1.json). The
+including the [JSON schema](docs/json/schema-1.json). File comparisons use
+[JSON schema version 2](docs/json/schema-2.json). The
 [implementation plan](docs/development/v0.1-plan.md) tracks the remaining work.
 The [binary analysis design](docs/design/binary-analysis.md) describes current ELF and
 PE inspection and future format support.
@@ -31,17 +34,25 @@ PE inspection and future format support.
 ```sh
 crucksware compare old-rootfs/ new-rootfs/
 crucksware compare --format json old-rootfs/ new-rootfs/
+crucksware compare old-program new-program
 crucksware inspect ./program.bin
 ```
 
-The command exits with status 0 when the trees have no differences, 1 when they do,
-and 2 when comparison or output fails. See `crucksware compare --help` for limits.
+`compare` accepts either two directories or two regular files. Directory reports use
+JSON schema v1. File reports use schema v2 and show exact byte-level changes separately
+from normalized ELF or PE facts. If the detected formats differ, the report identifies
+the mismatch. Unknown files receive exact byte comparison only. The command exits with
+status 0 when no change is found, 1 when a change is found, and 2 when comparison or
+output fails. See `crucksware compare --help` for limits.
 `inspect` parses bounded ELF and PE structure without executing the input. Both formats
 are limited to 64 MiB and 100,000 reported records by default. PE output includes
 sections, imports, exports, resource metadata, CodeView PDB identity where present, and
 certificate-table location. It does not verify Authenticode signatures. Unknown files
-receive only a bounded text/binary classification. Use `crucksware inspect --help` to
-adjust byte and record limits.
+receive only a bounded text/binary classification. File comparison's byte-read limit
+is shared across inspection and exact comparison of both inputs, and its entry limit is
+shared across semantic parsing of both files. Directory-only depth and path-byte options
+do not apply to file comparisons. Use
+`crucksware inspect --help` to adjust inspection limits.
 
 ## Interactive shell
 

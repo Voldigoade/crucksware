@@ -1,18 +1,18 @@
 # Binary Analysis Design
 
 This document records current and planned binary-analysis behavior. Bounded ELF and PE
-inspection are implemented for selected structural facts. AppImage inspection and all
-binary semantic comparison remain future work. Inputs remain read-only and are never
-executed, loaded by the operating-system loader, or mounted.
+inspection and normalized file comparison are implemented for selected structural facts.
+AppImage inspection remains future work. Inputs remain read-only and are never executed,
+loaded by the operating-system loader, or mounted.
 
 ## Model
 
-Single-input inspection and before/after comparison should share one bounded parsing
-path. Inspection returns a deterministic set of format facts. Comparison inspects each
-input with that same path, then compares the normalized facts and reports byte-level
-change separately where useful. A format mismatch is explicit; it is not interpreted
-as a set of matching ELF or PE fields. Unsupported or malformed input must produce a
-clear result, never a partial successful report.
+Single-input inspection and before/after comparison share one bounded parsing path.
+Inspection returns a deterministic set of format facts. Comparison inspects each input
+with that same path, then compares normalized facts and exact bytes separately. A format
+mismatch is explicit; it is not interpreted as a set of matching ELF or PE fields.
+Unsupported or malformed input produces a clear result, never a partial successful
+report.
 
 Detect containers before their inner executable format. A Type 2 AppImage is also an
 ELF file, so identify it as an AppImage only when its marker and appended filesystem
@@ -78,6 +78,9 @@ output is limited to CodeView PDB identity; other debug records are not summariz
 PE files are limited to 64 MiB by default. Each copied name is limited to 4 KiB and the
 aggregate copied-name budget is 16 MiB. Parser limits reduce exposure but do not prove
 robustness against hostile metadata; malformed-input and fuzz testing remain required.
+Matching ELF or PE inputs compare these normalized facts independently of exact byte
+comparison. A format mismatch is reported. Unknown and text files receive exact byte
+comparison only. Semantic fact equality does not establish behavioral equivalence.
 
 ## AppImage
 

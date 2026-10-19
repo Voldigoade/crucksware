@@ -1,3 +1,4 @@
+pub mod binary;
 pub mod html;
 pub mod inspection;
 pub mod json;

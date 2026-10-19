@@ -6,6 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(not(unix))]
+use std::time::SystemTime;
+
 use crate::path::encode_bytes;
 
 const SAMPLE_SIZE: usize = 8_192;
@@ -69,6 +72,49 @@ pub(crate) struct InputDetection {
     pub file: Option<File>,
     pub sample: Vec<u8>,
     pub pe_signature_probe: Option<PeSignatureProbe>,
+    pub stamp: Option<InputStamp>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InputStamp {
+    len: u64,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    mode: u32,
+    #[cfg(unix)]
+    mtime: (i64, i64),
+    #[cfg(unix)]
+    ctime: (i64, i64),
+    #[cfg(not(unix))]
+    modified: Option<SystemTime>,
+}
+
+impl InputStamp {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+
+            Self {
+                len: metadata.len(),
+                dev: metadata.dev(),
+                ino: metadata.ino(),
+                mode: metadata.mode(),
+                mtime: (metadata.mtime(), metadata.mtime_nsec()),
+                ctime: (metadata.ctime(), metadata.ctime_nsec()),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {
+                len: metadata.len(),
+                modified: metadata.modified().ok(),
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -149,6 +195,7 @@ pub(crate) fn detect_input_bounded(
             file: None,
             sample: Vec::new(),
             pe_signature_probe: None,
+            stamp: None,
         });
     }
     if !metadata.is_file() {
@@ -158,11 +205,17 @@ pub(crate) fn detect_input_bounded(
     }
 
     let mut file = open_input_file(path).map_err(|source| input_io("open input", path, source))?;
-    let metadata = file
+    let opened_metadata = file
         .metadata()
         .map_err(|source| input_io("inspect open input", path, source))?;
-    if !metadata.is_file() {
+    if !opened_metadata.is_file() {
         return Err(InputError::UnsupportedType {
+            path: path.to_path_buf(),
+        });
+    }
+    let stamp = InputStamp::from_metadata(&opened_metadata);
+    if stamp != InputStamp::from_metadata(&metadata) {
+        return Err(InputError::Changed {
             path: path.to_path_buf(),
         });
     }
@@ -178,18 +231,20 @@ pub(crate) fn detect_input_bounded(
     let sample = &sample[..sample_len];
 
     if sample.starts_with(ELF_MAGIC) {
+        revalidate_input_file(&file, path, &stamp)?;
         return Ok(InputDetection {
             kind: InputKind::Elf,
-            size_bytes: Some(metadata.len()),
+            size_bytes: Some(opened_metadata.len()),
             bytes_read: sample_len as u64,
             file: Some(file),
             sample: sample.to_vec(),
             pe_signature_probe: None,
+            stamp: Some(stamp),
         });
     }
 
     let mut bytes_read = sample_len as u64;
-    if let Some(offset) = pe_signature_offset(sample, metadata.len()) {
+    if let Some(offset) = pe_signature_offset(sample, opened_metadata.len()) {
         let (signature, probe) = if let Ok(start) = usize::try_from(offset)
             && let Some(end) = start.checked_add(PE_SIGNATURE.len())
             && let Some(signature) = sample.get(start..end)
@@ -217,18 +272,20 @@ pub(crate) fn detect_input_bounded(
             (signature == *PE_SIGNATURE, Some(signature))
         };
         if signature {
+            revalidate_input_file(&file, path, &stamp)?;
             return Ok(InputDetection {
                 kind: InputKind::Pe,
-                size_bytes: Some(metadata.len()),
+                size_bytes: Some(opened_metadata.len()),
                 bytes_read,
                 file: Some(file),
                 sample: sample.to_vec(),
                 pe_signature_probe: probe.map(|bytes| PeSignatureProbe { offset, bytes }),
+                stamp: Some(stamp),
             });
         }
     }
 
-    let expected_sample_len = metadata.len().min(SAMPLE_SIZE as u64);
+    let expected_sample_len = opened_metadata.len().min(SAMPLE_SIZE as u64);
     if (sample_len as u64) < expected_sample_len {
         if max_bytes_read >= expected_sample_len {
             return Err(InputError::Changed {
@@ -241,24 +298,59 @@ pub(crate) fn detect_input_bounded(
         });
     }
 
-    let sample_is_truncated = sample_len == SAMPLE_SIZE && metadata.len() > SAMPLE_SIZE as u64;
+    let sample_is_truncated =
+        sample_len == SAMPLE_SIZE && opened_metadata.len() > SAMPLE_SIZE as u64;
     let kind = if looks_like_text(sample, sample_is_truncated) {
         InputKind::Text
     } else {
         InputKind::UnknownBinary
     };
+    revalidate_input_file(&file, path, &stamp)?;
     Ok(InputDetection {
         kind,
-        size_bytes: Some(metadata.len()),
+        size_bytes: Some(opened_metadata.len()),
         bytes_read,
         file: Some(file),
         sample: sample.to_vec(),
         pe_signature_probe: None,
+        stamp: Some(stamp),
     })
 }
 
+pub(crate) fn revalidate_input_file(
+    file: &File,
+    path: &Path,
+    expected: &InputStamp,
+) -> Result<(), InputError> {
+    let handle_metadata = file
+        .metadata()
+        .map_err(|source| input_io("revalidate input", path, source))?;
+    let path_metadata = fs::metadata(path).map_err(|source| {
+        if matches!(
+            source.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+        ) {
+            InputError::Changed {
+                path: path.to_path_buf(),
+            }
+        } else {
+            input_io("revalidate input", path, source)
+        }
+    })?;
+    if !handle_metadata.is_file()
+        || !path_metadata.is_file()
+        || InputStamp::from_metadata(&handle_metadata) != *expected
+        || InputStamp::from_metadata(&path_metadata) != *expected
+    {
+        return Err(InputError::Changed {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
-fn open_input_file(path: &Path) -> io::Result<File> {
+pub(crate) fn open_input_file(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
 
     fs::OpenOptions::new()
@@ -268,7 +360,7 @@ fn open_input_file(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn open_input_file(path: &Path) -> io::Result<File> {
+pub(crate) fn open_input_file(path: &Path) -> io::Result<File> {
     File::open(path)
 }
 
@@ -320,4 +412,26 @@ fn looks_like_text(sample: &[u8], sample_is_truncated: bool) -> bool {
 
 fn allowed_text_character(character: char) -> bool {
     !character.is_control() || matches!(character, '\t' | '\n' | '\r')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn revalidation_detects_a_same_length_path_replacement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("input");
+        let replacement = temporary.path().join("replacement");
+        fs::write(&path, b"old").unwrap();
+        let file = open_input_file(&path).unwrap();
+        let stamp = InputStamp::from_metadata(&file.metadata().unwrap());
+        fs::write(&replacement, b"new").unwrap();
+        fs::rename(replacement, &path).unwrap();
+
+        let error = revalidate_input_file(&file, &path, &stamp).unwrap_err();
+
+        assert!(matches!(error, InputError::Changed { .. }));
+    }
 }

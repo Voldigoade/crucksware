@@ -4,7 +4,9 @@ use std::{
     path::Path,
 };
 
-use crate::input::{InputDetection, InputError, InputKind, detect_input_bounded};
+use crate::input::{
+    InputDetection, InputError, InputKind, InputStamp, detect_input_bounded, revalidate_input_file,
+};
 
 mod elf;
 mod pe;
@@ -87,6 +89,7 @@ pub struct ElfImport {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ElfInspection {
+    pub(crate) entries_read: u64,
     pub class: &'static str,
     pub byte_order: &'static str,
     pub architecture: String,
@@ -170,6 +173,7 @@ pub struct PePdbInfo {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeInspection {
+    pub(crate) entries_read: u64,
     pub format: &'static str,
     pub architecture: String,
     pub machine: u16,
@@ -189,6 +193,9 @@ pub struct PeInspection {
 pub struct FileInspection {
     pub kind: InputKind,
     pub size_bytes: u64,
+    pub bytes_read: u64,
+    pub(crate) semantic_entries: u64,
+    pub(crate) input_stamp: Option<InputStamp>,
     pub content: ContentKind,
     pub elf: Option<ElfInspection>,
     pub pe: Option<PeInspection>,
@@ -210,9 +217,15 @@ pub fn inspect_file_with_limits(
         file,
         sample,
         pe_signature_probe,
+        stamp,
     } = detect_input_bounded(path, max_bytes_read)?;
     let Some(size_bytes) = size_bytes else {
         return Err(InputError::UnsupportedType {
+            path: path.to_path_buf(),
+        });
+    };
+    let Some(stamp) = stamp else {
+        return Err(InputError::Changed {
             path: path.to_path_buf(),
         });
     };
@@ -223,49 +236,76 @@ pub fn inspect_file_with_limits(
         }
     };
 
-    let (elf, pe) = match kind {
+    let (elf, pe, bytes_read) = match kind {
         InputKind::Elf => {
             let file = file.ok_or_else(|| InputError::Changed {
                 path: path.to_path_buf(),
             })?;
-            let data = read_format_file(
+            let read = read_format_file(
                 FormatFileRead {
                     file,
                     sample,
                     bytes_already_read: bytes_read,
                     size_bytes,
                     signature_probe: None,
+                    stamp: stamp.clone(),
                 },
                 max_bytes_read,
                 ELF_FILE_LIMIT,
                 path,
             )?;
-            (Some(elf::inspect(&data, max_entries, path)?), None)
+            (
+                Some(elf::inspect(&read.data, max_entries, path)?),
+                None,
+                read.bytes_read,
+            )
         }
         InputKind::Pe => {
             let file = file.ok_or_else(|| InputError::Changed {
                 path: path.to_path_buf(),
             })?;
-            let data = read_format_file(
+            let read = read_format_file(
                 FormatFileRead {
                     file,
                     sample,
                     bytes_already_read: bytes_read,
                     size_bytes,
                     signature_probe: pe_signature_probe,
+                    stamp: stamp.clone(),
                 },
                 max_bytes_read,
                 PE_FILE_LIMIT,
                 path,
             )?;
-            (None, Some(pe::inspect(&data, max_entries, path)?))
+            (
+                None,
+                Some(pe::inspect(&read.data, max_entries, path)?),
+                read.bytes_read,
+            )
         }
-        _ => (None, None),
+        _ => {
+            let file = file.as_ref().ok_or_else(|| InputError::Changed {
+                path: path.to_path_buf(),
+            })?;
+            revalidate_input_file(file, path, &stamp)?;
+            (None, None, bytes_read)
+        }
     };
+    let semantic_entries = elf
+        .as_ref()
+        .map_or(0, |inspection| inspection.entries_read)
+        .checked_add(pe.as_ref().map_or(0, |inspection| inspection.entries_read))
+        .ok_or(InputError::LimitExceeded {
+            resource: "semantic entries",
+            limit: max_entries,
+        })?;
 
     Ok(FileInspection {
         kind,
         size_bytes,
+        bytes_read,
+        semantic_entries,
+        input_stamp: Some(stamp),
         content,
         elf,
         pe,
@@ -278,6 +318,12 @@ struct FormatFileRead {
     bytes_already_read: u64,
     size_bytes: u64,
     signature_probe: Option<crate::input::PeSignatureProbe>,
+    stamp: InputStamp,
+}
+
+struct FormatFileContent {
+    data: Vec<u8>,
+    bytes_read: u64,
 }
 
 fn read_format_file(
@@ -285,13 +331,14 @@ fn read_format_file(
     max_bytes_read: u64,
     file_limit: FormatFileLimit,
     path: &Path,
-) -> Result<Vec<u8>, InputError> {
+) -> Result<FormatFileContent, InputError> {
     let FormatFileRead {
         mut file,
         sample,
         bytes_already_read,
         size_bytes,
         signature_probe,
+        stamp,
     } = input;
     if size_bytes > file_limit.max_bytes {
         return Err(InputError::LimitExceeded {
@@ -384,18 +431,12 @@ fn read_format_file(
         read_file_range(&mut file, &mut data, sample_len..data_len, path)?;
     }
 
-    let metadata = file.metadata().map_err(|source| InputError::Io {
-        operation: "revalidate input",
-        path: path.to_path_buf(),
-        source,
-    })?;
-    if metadata.len() != size_bytes {
-        return Err(InputError::Changed {
-            path: path.to_path_buf(),
-        });
-    }
+    revalidate_input_file(&file, path, &stamp)?;
 
-    Ok(data)
+    Ok(FormatFileContent {
+        data,
+        bytes_read: total_bytes_read,
+    })
 }
 
 fn read_file_range(

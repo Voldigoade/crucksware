@@ -1,5 +1,6 @@
 //! Experimental filesystem comparison core. The Rust API is not stable.
 
+pub mod binary_compare;
 pub mod error;
 pub mod input;
 pub mod inspection;

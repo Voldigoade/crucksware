@@ -95,6 +95,7 @@ where
         .transpose()?;
     let certificate_table = certificate_table(file, data.len(), path)?;
     Ok(PeInspection {
+        entries_read: budget.entries,
         format: if file.is_64() { "PE32+" } else { "PE32" },
         architecture: format!("{:?}", file.architecture()),
         machine: headers.file_header().machine.get(LE).0,
