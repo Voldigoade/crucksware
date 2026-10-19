@@ -278,6 +278,67 @@ fn rejects_inconsistent_elf_header_version_and_size_fields() {
     }
 }
 
+#[test]
+fn deterministic_elf_mutations_never_panic() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("mutated-elf");
+    let seeds = [
+        minimal_elf64(),
+        elf_with_segments(),
+        elf_with_dynamic_segment(),
+        elf_with_section_name(),
+    ];
+    let mut state = 0x5eed_f00d_cafe_babe_u64;
+
+    for (seed_index, seed) in seeds.iter().enumerate() {
+        for mutation_index in 0..64 {
+            let mut bytes = seed.clone();
+            for _ in 0..1 + mutation_index % 4 {
+                let start = 16 + (next_random(&mut state) as usize % (bytes.len() - 16));
+                let width =
+                    [1, 2, 4, 8][next_random(&mut state) as usize % 4].min(bytes.len() - start);
+                let replacement = next_random(&mut state).to_le_bytes();
+                bytes[start..start + width].copy_from_slice(&replacement[..width]);
+            }
+            fs::write(&path, bytes).unwrap();
+
+            let outcome = std::panic::catch_unwind(|| inspect_file(&path, DEFAULT_MAX_BYTES_READ));
+
+            assert!(
+                outcome.is_ok(),
+                "ELF parser panicked for seed {seed_index}, mutation {mutation_index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn overlapping_elf_section_ranges_do_not_panic() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("overlapping-sections");
+    let mut bytes = elf_with_invalid_data_section();
+    let string_table_offset = 64 + 3 * 64;
+    let data_section = 64 + 2 * 64;
+    bytes[data_section + 24..data_section + 32]
+        .copy_from_slice(&(string_table_offset as u64).to_le_bytes());
+    bytes[data_section + 32..data_section + 40].copy_from_slice(&4_u64.to_le_bytes());
+    fs::write(&path, bytes).unwrap();
+
+    let outcome = std::panic::catch_unwind(|| inspect_file(&path, DEFAULT_MAX_BYTES_READ));
+
+    assert!(
+        outcome.is_ok(),
+        "ELF parser panicked on overlapping section data"
+    );
+}
+
+fn next_random(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
 fn minimal_elf64() -> Vec<u8> {
     let mut bytes = vec![0; 64];
     bytes[..4].copy_from_slice(b"\x7fELF");
