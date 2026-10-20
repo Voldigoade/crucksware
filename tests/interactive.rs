@@ -967,6 +967,28 @@ fn report_options_preserve_intentional_leading_spaces_in_relative_output_names()
 
 #[cfg(target_os = "linux")]
 #[test]
+fn report_paths_starting_with_double_dash_remain_usable() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let text_report = temporary.path().join("--report.txt");
+    let markdown_report = temporary.path().join("--report.md");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+
+    let input =
+        b"anal\n3\n1\nold\nnew\nreport text --report.txt\nreport markdown --report.md\nexit\n";
+    let output = run_shell_at(input, Some(temporary.path()));
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert!(std::fs::read_to_string(text_report).is_ok());
+    assert!(std::fs::read_to_string(markdown_report).is_ok());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn language_command_localizes_comparison_last_explain_and_report_summaries() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old rootfs");

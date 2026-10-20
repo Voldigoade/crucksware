@@ -637,3 +637,46 @@ fn localized_binary_comparison_states_use_explicit_language_words() {
         }
     }
 }
+
+#[test]
+fn french_structural_summaries_use_grammatical_union_and_signature_articles() {
+    use crate::readable::{EvidenceFact, Language};
+
+    fn render(action: &str, kind: &str, before: Option<&str>, after: Option<&str>) -> String {
+        super::language::describe(
+            &EvidenceFact::SourceStructuralChange {
+                action: action.to_owned(),
+                symbol_kind: kind.to_owned(),
+                name: "DeviceInfo".to_owned(),
+                before_signature: before.map(str::to_owned),
+                after_signature: after.map(str::to_owned),
+            },
+            Language::French,
+        )
+    }
+
+    let union_added = render("added", "union", None, None);
+    assert_eq!(union_added, "union \"DeviceInfo\" ajoutée");
+
+    let union_signature = render(
+        "signature_changed",
+        "union",
+        Some("DeviceInfo(old)"),
+        Some("DeviceInfo(new)"),
+    );
+    assert_eq!(
+        union_signature,
+        "signature de l'union \"DeviceInfo\" modifiée de \"DeviceInfo(old)\" à \"DeviceInfo(new)\""
+    );
+
+    let type_signature = render(
+        "signature_changed",
+        "type",
+        Some("DeviceInfo(old)"),
+        Some("DeviceInfo(new)"),
+    );
+    assert_eq!(
+        type_signature,
+        "signature du type \"DeviceInfo\" modifiée de \"DeviceInfo(old)\" à \"DeviceInfo(new)\""
+    );
+}

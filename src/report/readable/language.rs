@@ -672,13 +672,9 @@ fn localized_structural_change(
             None => format!("suppression de {kind} \"{name}\""),
         },
         (Language::French, "signature_changed") => {
-            let article = match french_feminine_kind(kind) {
-                Some(true) => "la ",
-                Some(false) => "du ",
-                None => "",
-            };
+            let subject = french_signature_subject(kind);
             format!(
-                "signature de {article}{kind} \"{name}\" modifiée de {} à {}",
+                "signature {subject} \"{name}\" modifiée de {} à {}",
                 quoted(language, before_signature),
                 quoted(language, after_signature)
             )
@@ -729,10 +725,47 @@ fn localized_structural_change(
 fn french_feminine_kind(kind: &str) -> Option<bool> {
     match kind {
         "fonction" | "méthode" | "structure" | "énumération" | "classe" | "interface"
-        | "constante" | "macro" | "importation" => Some(true),
-        "union" | "type" | "module" => Some(false),
+        | "constante" | "macro" | "importation" | "union" => Some(true),
+        "type" | "module" => Some(false),
         _ => None,
     }
+}
+
+fn french_signature_subject(kind: &str) -> String {
+    match french_feminine_kind(kind) {
+        Some(true) if begins_with_french_vowel(kind) => format!("de l'{kind}"),
+        Some(true) => format!("de la {kind}"),
+        Some(false) => format!("du {kind}"),
+        None => format!("de {kind}"),
+    }
+}
+
+fn begins_with_french_vowel(value: &str) -> bool {
+    value.chars().next().is_some_and(|character| {
+        matches!(
+            character,
+            'a' | 'à'
+                | 'â'
+                | 'ä'
+                | 'e'
+                | 'é'
+                | 'è'
+                | 'ê'
+                | 'ë'
+                | 'i'
+                | 'î'
+                | 'ï'
+                | 'o'
+                | 'ô'
+                | 'ö'
+                | 'u'
+                | 'ù'
+                | 'û'
+                | 'ü'
+                | 'y'
+                | 'ÿ'
+        )
+    })
 }
 
 fn spanish_feminine_kind(kind: &str) -> Option<bool> {
