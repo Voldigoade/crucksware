@@ -680,3 +680,30 @@ fn french_structural_summaries_use_grammatical_union_and_signature_articles() {
         "signature du type \"DeviceInfo\" modifiée de \"DeviceInfo(old)\" à \"DeviceInfo(new)\""
     );
 }
+
+#[test]
+fn spanish_signature_summaries_use_grammatical_articles() {
+    use crate::readable::{EvidenceFact, Language};
+
+    fn render(kind: &str) -> String {
+        super::language::describe(
+            &EvidenceFact::SourceStructuralChange {
+                action: "signature_changed".to_owned(),
+                symbol_kind: kind.to_owned(),
+                name: "login".to_owned(),
+                before_signature: Some("login(old)".to_owned()),
+                after_signature: Some("login(new)".to_owned()),
+            },
+            Language::Spanish,
+        )
+    }
+
+    assert_eq!(
+        render("method"),
+        "firma del método \"login\" cambió de \"login(old)\" a \"login(new)\""
+    );
+    assert_eq!(
+        render("function"),
+        "firma de la función \"login\" cambió de \"login(old)\" a \"login(new)\""
+    );
+}
