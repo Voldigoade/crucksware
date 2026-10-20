@@ -691,13 +691,13 @@ fn localized_structural_change(
             None => format!("eliminación de {kind} \"{name}\""),
         },
         (Language::Spanish, "signature_changed") => {
-            let article = match spanish_feminine_kind(kind) {
-                Some(true) => "la ",
+            let preposition = match spanish_feminine_kind(kind) {
+                Some(true) => "de la ",
                 Some(false) => "del ",
-                None => "",
+                None => "de ",
             };
             format!(
-                "firma de {article}{kind} \"{name}\" cambió de {} a {}",
+                "firma {preposition}{kind} \"{name}\" cambió de {} a {}",
                 quoted(language, before_signature),
                 quoted(language, after_signature)
             )
