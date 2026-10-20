@@ -4,15 +4,23 @@ use super::shared::{category_name, device_id, format_mode, kind_name, mode, syml
 use crate::{
     model::{Category, Change, ChangedField, Diff, Entry, Summary},
     path::encode_bytes,
-    readable::select_filesystem,
+    readable::{Language, select_filesystem},
 };
 
 #[cfg(test)]
 mod tests;
 
 pub fn write_text(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
+    write_text_in_language(diff, Language::English, output)
+}
+
+pub fn write_text_in_language(
+    diff: &Diff,
+    language: Language,
+    output: &mut impl Write,
+) -> io::Result<()> {
     let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
-    super::readable::write_text(&packet, output)?;
+    super::readable::write_text_in_language(&packet, language, output)?;
     output.write_all(b"\n")?;
     write_text_details(diff, output)
 }

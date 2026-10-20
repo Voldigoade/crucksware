@@ -4,28 +4,44 @@ use super::shared::{category_name, changed_field_name, validate_diff_summary};
 use crate::{
     model::{Category, ChangedField, Diff, Entry},
     path::encode_bytes,
-    readable::select_filesystem,
+    readable::{Language, select_filesystem},
 };
 
 #[cfg(test)]
 mod tests;
 
 pub fn write_markdown(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
-    let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
-    write_markdown_with_labels(diff, output, "Total changes", "No changes.", &packet)
+    write_markdown_in_language(diff, Language::English, output)
 }
 
-pub(super) fn write_markdown_with_labels(
+pub fn write_markdown_in_language(
+    diff: &Diff,
+    language: Language,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
+    write_markdown_with_labels_in_language(
+        diff,
+        output,
+        "Total changes",
+        "No changes.",
+        &packet,
+        language,
+    )
+}
+
+pub(super) fn write_markdown_with_labels_in_language(
     diff: &Diff,
     output: &mut impl Write,
     total_label: &str,
     empty_message: &str,
     packet: &crate::readable::EvidencePacket,
+    language: Language,
 ) -> io::Result<()> {
     let total_changes = validate_diff_summary(diff)?;
 
     output.write_all(b"# Crucksware report\n\n")?;
-    super::readable::write_markdown(packet, output)?;
+    super::readable::write_markdown_in_language(packet, language, output)?;
     output.write_all(b"\n## Summary\n\n")?;
     output.write_all(b"| Category | Count |\n|:--|--:|\n")?;
     writeln!(output, "| Added | {} |", diff.summary.added)?;

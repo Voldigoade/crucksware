@@ -4,7 +4,7 @@ use super::shared::{category_name, changed_field_name, validate_diff_summary};
 use crate::{
     model::{Category, ChangedField, Diff, Entry},
     path::encode_bytes,
-    readable::select_filesystem,
+    readable::{Language, select_filesystem},
     semantic_tree::{BinaryFileChange, SemanticTreeDiff},
     source::{SourceFileChange, StructuralChange},
 };
@@ -60,6 +60,15 @@ categoryFilter.addEventListener("change", updateFilters);
 mod tests;
 
 pub fn write_html(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
+    write_html_with_languages(diff, &[Language::English], output)
+}
+
+pub fn write_html_with_languages(
+    diff: &Diff,
+    languages: &[Language],
+    output: &mut impl Write,
+) -> io::Result<()> {
+    super::readable::validate_languages(languages)?;
     let total_changes = validate_diff_summary(diff)?;
     let packet = select_filesystem(diff).map_err(super::readable::selection_error)?;
 
@@ -70,7 +79,7 @@ pub fn write_html(diff: &Diff, output: &mut impl Write) -> io::Result<()> {
     output.write_all(
         b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n",
     )?;
-    super::readable::write_html(&packet, output)?;
+    super::readable::write_html_languages(&packet, languages, output)?;
     write_summary(diff, total_changes, output)?;
     output.write_all(
         b"<section aria-labelledby=\"changes-heading\">\n<h2 id=\"changes-heading\">Changes</h2>\n",
@@ -96,6 +105,15 @@ pub fn write_semantic_tree_html(
     diff: &SemanticTreeDiff,
     output: &mut impl Write,
 ) -> io::Result<()> {
+    write_semantic_tree_html_with_languages(diff, &[Language::English], output)
+}
+
+pub fn write_semantic_tree_html_with_languages(
+    diff: &SemanticTreeDiff,
+    languages: &[Language],
+    output: &mut impl Write,
+) -> io::Result<()> {
+    super::readable::validate_languages(languages)?;
     let total_changes = validate_diff_summary(&diff.filesystem)?;
     let packet =
         crate::readable::select_semantic_tree(diff).map_err(super::readable::selection_error)?;
@@ -110,7 +128,7 @@ pub fn write_semantic_tree_html(
     output.write_all(
         b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n",
     )?;
-    super::readable::write_html(&packet, output)?;
+    super::readable::write_html_languages(&packet, languages, output)?;
     write_summary_with_total_label(
         &diff.filesystem,
         total_changes,

@@ -5,13 +5,21 @@ use serde_json::{Map, Value, json};
 use crate::{
     binary_compare::{FileComparison, SemanticComparisonStatus},
     input::InputKind,
-    readable::select_file_comparison,
+    readable::{Language, select_file_comparison},
     report::{html, semantic_tree::write_markdown_cell},
 };
 
 pub fn write_text(comparison: &FileComparison, output: &mut impl Write) -> io::Result<()> {
+    write_text_in_language(comparison, Language::English, output)
+}
+
+pub fn write_text_in_language(
+    comparison: &FileComparison,
+    language: Language,
+    output: &mut impl Write,
+) -> io::Result<()> {
     let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
-    super::readable::write_text(&packet, output)?;
+    super::readable::write_text_in_language(&packet, language, output)?;
     output.write_all(b"\n")?;
     writeln!(output, "File comparison")?;
     writeln!(
@@ -97,9 +105,17 @@ pub fn write_json(comparison: &FileComparison, output: &mut impl Write) -> io::R
 }
 
 pub fn write_markdown(comparison: &FileComparison, output: &mut impl Write) -> io::Result<()> {
+    write_markdown_in_language(comparison, Language::English, output)
+}
+
+pub fn write_markdown_in_language(
+    comparison: &FileComparison,
+    language: Language,
+    output: &mut impl Write,
+) -> io::Result<()> {
     let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
     output.write_all(b"# Crucksware report\n\n")?;
-    super::readable::write_markdown(&packet, output)?;
+    super::readable::write_markdown_in_language(&packet, language, output)?;
     output.write_all(b"\n## Summary\n\n| Field | Value |\n|:--|:--|\n")?;
     writeln!(output, "| Old kind | {} |", comparison.old_kind)?;
     writeln!(output, "| New kind | {} |", comparison.new_kind)?;
@@ -139,6 +155,15 @@ pub fn write_markdown(comparison: &FileComparison, output: &mut impl Write) -> i
 }
 
 pub fn write_html(comparison: &FileComparison, output: &mut impl Write) -> io::Result<()> {
+    write_html_with_languages(comparison, &[Language::English], output)
+}
+
+pub fn write_html_with_languages(
+    comparison: &FileComparison,
+    languages: &[Language],
+    output: &mut impl Write,
+) -> io::Result<()> {
+    super::readable::validate_languages(languages)?;
     let packet = select_file_comparison(comparison).map_err(super::readable::selection_error)?;
     output.write_all(
         b"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Crucksware report</title>\n<style>",
@@ -147,7 +172,7 @@ pub fn write_html(comparison: &FileComparison, output: &mut impl Write) -> io::R
     output.write_all(
         b"</style>\n</head>\n<body>\n<main>\n<header><h1>Crucksware report</h1></header>\n",
     )?;
-    super::readable::write_html(&packet, output)?;
+    super::readable::write_html_languages(&packet, languages, output)?;
     output.write_all(
         b"<section aria-labelledby=\"summary-heading\">\n<h2 id=\"summary-heading\">File comparison</h2>\n<table class=\"summary\">\n<tbody>\n",
     )?;

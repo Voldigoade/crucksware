@@ -6,7 +6,7 @@ use crate::{
     model::{Category, Change, ChangedField, Diff, Entry, Summary},
     path::RelPath,
     readable::{
-        EvidenceError, EvidenceFact, select_file_comparison, select_filesystem,
+        EvidenceError, EvidenceFact, Language, select_file_comparison, select_filesystem,
         select_semantic_tree,
     },
     semantic_tree::{BinaryAnalysisStatus, BinaryFileChange, SemanticTreeDiff},
@@ -281,6 +281,99 @@ fn unchanged_file_comparison_keeps_byte_level_evidence() {
             ..
         }
     ));
+}
+
+#[test]
+fn localized_source_summaries_preserve_structural_identifiers() {
+    let mut added = structural_change("validate_token".to_owned());
+    added.after_signature = Some("validate_token(token: &str) -> bool".to_owned());
+    let removed = StructuralChange {
+        action: StructuralAction::Removed,
+        kind: StructuralKind::Method,
+        name: "legacy_auth".to_owned(),
+        before_signature: Some("legacy_auth(user)".to_owned()),
+        after_signature: None,
+    };
+    let changed = StructuralChange {
+        action: StructuralAction::SignatureChanged,
+        kind: StructuralKind::Function,
+        name: "login".to_owned(),
+        before_signature: Some("login(user)".to_owned()),
+        after_signature: Some("login(user, otp)".to_owned()),
+    };
+    let packet = select_semantic_tree(&SemanticTreeDiff {
+        filesystem: Diff::default(),
+        source_changes: vec![source_change(b"src/auth.rs", vec![added, removed, changed])],
+        binary_changes: Vec::new(),
+    })
+    .unwrap();
+    let cases = [
+        (
+            Language::English,
+            "Readable summary",
+            "Source analysis: 1 changed file, 3 structural changes.",
+            "function \"validate_token\" added",
+            "method \"legacy_auth\" removed",
+            "signature changed from \"login(user)\" to \"login(user, otp)\"",
+            "text changed (+1 lines, -0 lines across 1 hunk)",
+        ),
+        (
+            Language::French,
+            "Résumé lisible",
+            "Analyse du code : 1 fichier modifié, 3 changements structurels.",
+            "fonction \"validate_token\" ajoutée",
+            "méthode \"legacy_auth\" supprimée",
+            "signature de la fonction \"login\" modifiée de \"login(user)\" à \"login(user, otp)\"",
+            "texte modifié (+1 ligne, -0 lignes sur 1 bloc)",
+        ),
+        (
+            Language::Spanish,
+            "Resumen legible",
+            "Análisis de código: 1 archivo modificado, 3 cambios estructurales.",
+            "función \"validate_token\" añadida",
+            "método \"legacy_auth\" eliminado",
+            "firma de la función \"login\" cambió de \"login(user)\" a \"login(user, otp)\"",
+            "texto modificado (+1 línea, -0 líneas en 1 bloque)",
+        ),
+        (
+            Language::SimplifiedChinese,
+            "可读摘要",
+            "源码分析：1 个文件有变更，3 项结构变更。",
+            "函数 \"validate_token\" 已添加",
+            "方法 \"legacy_auth\" 已移除",
+            "函数 \"login\" 的签名从 \"login(user)\" 变为 \"login(user, otp)\"",
+            "文本已更改（+1 行，-0 行，分为 1 个片段）",
+        ),
+    ];
+
+    for (language, heading, overview, added, removed, changed, text_change) in cases {
+        let mut output = Vec::new();
+        crate::report::write_readable_summary_text_in_language(&packet, language, &mut output)
+            .unwrap();
+        let rendered = String::from_utf8(output).unwrap();
+        for expected in [heading, overview, added, removed, changed, text_change] {
+            assert!(
+                rendered.contains(expected),
+                "{language:?}: {expected}\n{rendered}"
+            );
+        }
+        assert!(rendered.contains("`src/auth.rs`"));
+    }
+}
+
+#[test]
+fn language_codes_are_explicit_and_stable() {
+    for (code, language) in [
+        ("en", Language::English),
+        ("fr", Language::French),
+        ("es", Language::Spanish),
+        ("zh-CN", Language::SimplifiedChinese),
+    ] {
+        assert_eq!(Language::parse(code), Some(language));
+        assert_eq!(language.code(), code);
+    }
+    assert_eq!(Language::parse("zh-TW"), None);
+    assert_eq!(Language::parse("FR"), None);
 }
 
 #[test]

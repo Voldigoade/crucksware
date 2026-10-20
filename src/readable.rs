@@ -5,7 +5,10 @@ use serde_json::Value;
 
 use crate::{binary_compare::FileComparison, model::Diff, semantic_tree::SemanticTreeDiff};
 
+mod language;
 mod select;
+
+pub use language::Language;
 
 #[cfg(test)]
 mod tests;

@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::{
     binary_compare::SemanticChange,
     path::encode_bytes,
-    readable::select_semantic_tree,
+    readable::{Language, select_semantic_tree},
     report::{json, text},
     semantic_tree::{BinaryAnalysisStatus, BinaryFileChange, SemanticTreeDiff},
     source::{SourceAnalysisStatus, SourceFileChange, StructuralChange, StructuralStatus},
@@ -15,8 +15,16 @@ use crate::{
 mod tests;
 
 pub fn write_text(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
+    write_text_in_language(diff, Language::English, output)
+}
+
+pub fn write_text_in_language(
+    diff: &SemanticTreeDiff,
+    language: Language,
+    output: &mut impl Write,
+) -> io::Result<()> {
     let packet = select_semantic_tree(diff).map_err(super::readable::selection_error)?;
-    super::readable::write_text(&packet, output)?;
+    super::readable::write_text_in_language(&packet, language, output)?;
     output.write_all(b"\n")?;
     text::write_text_details(&diff.filesystem, output)?;
     for change in &diff.source_changes {
@@ -69,13 +77,22 @@ pub fn write_text(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Resul
 }
 
 pub fn write_markdown(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
+    write_markdown_in_language(diff, Language::English, output)
+}
+
+pub fn write_markdown_in_language(
+    diff: &SemanticTreeDiff,
+    language: Language,
+    output: &mut impl Write,
+) -> io::Result<()> {
     let packet = select_semantic_tree(diff).map_err(super::readable::selection_error)?;
-    super::markdown::write_markdown_with_labels(
+    super::markdown::write_markdown_with_labels_in_language(
         &diff.filesystem,
         output,
         "Total filesystem changes",
         "No filesystem changes.",
         &packet,
+        language,
     )?;
     if !diff.source_changes.is_empty() {
         output.write_all(b"\n## Source analysis\n\n")?;
@@ -175,7 +192,15 @@ pub fn write_markdown(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::R
 }
 
 pub fn write_html(diff: &SemanticTreeDiff, output: &mut impl Write) -> io::Result<()> {
-    super::html::write_semantic_tree_html(diff, output)
+    write_html_with_languages(diff, &[Language::English], output)
+}
+
+pub fn write_html_with_languages(
+    diff: &SemanticTreeDiff,
+    languages: &[Language],
+    output: &mut impl Write,
+) -> io::Result<()> {
+    super::html::write_semantic_tree_html_with_languages(diff, languages, output)
 }
 
 pub(super) fn write_markdown_cell(output: &mut impl Write, value: &str) -> io::Result<()> {

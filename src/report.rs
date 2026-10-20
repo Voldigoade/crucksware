@@ -15,9 +15,31 @@ pub fn write_readable_summary_text(
     readable::write_text(packet, output)
 }
 
+pub fn write_readable_summary_text_in_language(
+    packet: &crate::readable::EvidencePacket,
+    language: crate::readable::Language,
+    output: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    readable::write_text_in_language(packet, language, output)
+}
+
 pub fn write_evidence_explanation(
     packet: &crate::readable::EvidencePacket,
     selector: &str,
+    output: &mut impl std::io::Write,
+) -> std::io::Result<usize> {
+    write_evidence_explanation_in_language(
+        packet,
+        selector,
+        crate::readable::Language::English,
+        output,
+    )
+}
+
+pub fn write_evidence_explanation_in_language(
+    packet: &crate::readable::EvidencePacket,
+    selector: &str,
+    language: crate::readable::Language,
     output: &mut impl std::io::Write,
 ) -> std::io::Result<usize> {
     let mut written = 0;
@@ -31,7 +53,7 @@ pub fn write_evidence_explanation(
                 && explicit_path.is_none()
                 && record.path.as_deref() == Some(selector));
         if matches {
-            readable::write_explanation(record, output)?;
+            readable::write_explanation_in_language(record, language, output)?;
             written += 1;
         }
     }
