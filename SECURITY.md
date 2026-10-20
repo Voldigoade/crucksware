@@ -1,7 +1,7 @@
 # Security
 
-Crucksware has no released versions yet. Report suspected vulnerabilities through
-a private security advisory in the repository's Security tab when available. If
+The `v0.1.0` release is available. Report suspected vulnerabilities through a
+private security advisory in the repository's Security tab when available. If
 that option is unavailable, contact the maintainer through the GitHub profile.
 Do not post exploit details, private firmware, or secrets in a public issue.
 
