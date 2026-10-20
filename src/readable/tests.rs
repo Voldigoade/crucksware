@@ -259,6 +259,31 @@ fn standalone_file_evidence_has_stable_ids_and_no_path() {
 }
 
 #[test]
+fn unchanged_file_comparison_keeps_byte_level_evidence() {
+    let comparison = FileComparison {
+        old_kind: InputKind::Elf,
+        new_kind: InputKind::Elf,
+        old_size_bytes: 64,
+        new_size_bytes: 64,
+        bytes_read: 128,
+        bytes_changed: false,
+        semantic_status: SemanticComparisonStatus::Compared,
+        semantic_changes: Vec::new(),
+    };
+
+    let packet = select_file_comparison(&comparison).unwrap();
+
+    assert_eq!(packet.records.len(), 1);
+    assert!(matches!(
+        &packet.records[0].fact,
+        EvidenceFact::BinaryBytesChanged {
+            byte_level_changed: Some(false),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn evidence_order_is_independent_of_input_and_fact_order() {
     let first_source = source_change(
         b"src/zeta.rs",

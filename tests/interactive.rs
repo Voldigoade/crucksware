@@ -141,6 +141,31 @@ fn anal_compares_two_files_and_last_shows_byte_and_semantic_summary() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn last_and_explain_preserve_identical_file_comparison_results() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old file");
+    let new = temporary.path().join("new file");
+    std::fs::write(&old, b"same bytes").expect("old file is written");
+    std::fs::write(&new, b"same bytes").expect("new file is written");
+
+    let input = format!(
+        "anal\n2\n{}\n{}\nlast\nexplain E0001\nexit\n",
+        old.display(),
+        new.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.matches("byte-level comparison unchanged").count() >= 3);
+    assert!(stdout.contains("Evidence E0001\nPath: file comparison"));
+    assert!(output.stderr.is_empty());
+    assert_eq!(std::fs::read(old).unwrap(), b"same bytes");
+    assert_eq!(std::fs::read(new).unwrap(), b"same bytes");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn anal_compares_large_files_with_the_pair_comparison_budget() {
     let temporary = tempfile::tempdir().expect("temporary directory is created");
     let old = temporary.path().join("old executable");

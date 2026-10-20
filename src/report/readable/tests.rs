@@ -85,6 +85,26 @@ fn html_summary_escapes_markup_and_control_characters() {
 }
 
 #[test]
+fn summaries_escape_bidi_formatting_characters_in_identifiers() {
+    let packet = packet("safe\u{202E}name", b"src/auth.rs");
+    let mut text = Vec::new();
+    let mut markdown = Vec::new();
+    let mut html = Vec::new();
+
+    super::write_text(&packet, &mut text).unwrap();
+    super::write_markdown(&packet, &mut markdown).unwrap();
+    super::write_html(&packet, &mut html).unwrap();
+
+    for output in [text, markdown, html] {
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("safe"));
+        assert!(rendered.contains("202E"));
+        assert!(rendered.contains("name"));
+        assert!(!rendered.contains('\u{202E}'));
+    }
+}
+
+#[test]
 fn empty_summary_and_omitted_count_are_explicit() {
     let empty = crate::readable::select_filesystem(&Diff::default()).unwrap();
     let mut output = Vec::new();

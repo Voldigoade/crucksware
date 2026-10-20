@@ -245,14 +245,10 @@ pub(super) fn select(
 pub(super) fn select_file_comparison(
     comparison: &FileComparison,
 ) -> Result<EvidencePacket, EvidenceError> {
-    let has_bytes_record = comparison.bytes_changed
-        || comparison.semantic_status != SemanticComparisonStatus::Compared
-        || !comparison.semantic_changes.is_empty();
-    let bytes_record_count = usize::from(has_bytes_record);
     let eligible_records = comparison
         .semantic_changes
         .len()
-        .checked_add(bytes_record_count)
+        .checked_add(1)
         .ok_or(EvidenceError::CountOverflow)?;
 
     let mut packet = EvidencePacket {
@@ -275,7 +271,9 @@ pub(super) fn select_file_comparison(
     for candidate in semantic_changes
         .into_iter()
         .map(EvidenceCandidate::FileComparisonSemantic)
-        .chain(has_bytes_record.then_some(EvidenceCandidate::FileComparisonBytes(comparison)))
+        .chain(std::iter::once(EvidenceCandidate::FileComparisonBytes(
+            comparison,
+        )))
     {
         if packet.records.len() >= MAX_EVIDENCE_RECORDS {
             continue;
