@@ -410,13 +410,39 @@ jobs:
               fi
             else
               release_args=(--verify-tag --title "Crucksware $TAG")
-              if [[ "$VERSION" == *-* ]]; then
+              version_without_build="${VERSION%%+*}"
+              if [[ "$version_without_build" == *-* ]]; then
                 release_args+=(--prerelease)
               fi
               gh release create "$TAG" "${release_args[@]}" \
                 --notes "Linux x86_64 binaries were built and tested in GitHub Actions from the exact source tag. The release archive is accompanied by SHA-256 checksums and GitHub artifact provenance."
             fi
             gh release upload "$TAG" "$ARCHIVE" "$SUMS"
+          fi
+
+      - name: Set release stability from the version
+        shell: bash
+        env:
+          TAG: ${{ steps.source.outputs.tag }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected_prerelease=false
+          version_without_build="${VERSION%%+*}"
+          if [[ "$version_without_build" == *-* ]]; then
+            expected_prerelease=true
+          fi
+          release_url="repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
+          release_id="$(gh api "$release_url" --jq .id)"
+          current_prerelease="$(gh api "$release_url" --jq .prerelease)"
+          if [[ "$current_prerelease" != "$expected_prerelease" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -F "prerelease=${expected_prerelease}" >/dev/null
+          fi
+          actual_prerelease="$(gh api "$release_url" --jq .prerelease)"
+          if [[ "$actual_prerelease" != "$expected_prerelease" ]]; then
+            echo "Release prerelease status does not match version $VERSION." >&2
+            exit 1
           fi
 
       - name: Verify published assets and provenance

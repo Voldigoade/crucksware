@@ -16,6 +16,8 @@ SOURCE MERGE
 Release binaries are built on GitHub-hosted Linux runners. They must never be
 uploaded from a maintainer workstation. Tags with a prerelease suffix, such as
 `v0.2.0-beta.1`, are published as GitHub prereleases.
+The workflow also checks an existing release's prerelease status against the
+version and corrects it before verifying publication.
 
 The workflow checks out the exact tag and verifies that the tag, Cargo.toml, and
 Cargo.lock versions match. It runs formatting, compilation, Clippy, tests, package
