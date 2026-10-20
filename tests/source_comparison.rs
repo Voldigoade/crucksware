@@ -173,6 +173,144 @@ fn source_mode_reports_rust_signature_changes() {
 }
 
 #[test]
+fn source_mode_reports_nested_python_signature_changes_on_the_nested_function() {
+    let (_temporary, old, new) = roots();
+    fs::write(
+        old.join("nested.py"),
+        "def outer():\n    def inner(x):\n        return x\n    return inner\n",
+    )
+    .unwrap();
+    fs::write(
+        new.join("nested.py"),
+        "def outer():\n    def inner(x, y):\n        return x + y\n    return inner\n",
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0]["action"], "signature_changed");
+    assert_eq!(changes[0]["kind"], "function");
+    assert_eq!(changes[0]["name"], "outer::inner");
+}
+
+#[test]
+fn source_mode_does_not_attribute_outer_signature_changes_to_nested_functions() {
+    let (_temporary, old, new) = roots();
+    fs::write(
+        old.join("nested.py"),
+        "def outer():\n    def inner(x):\n        return x\n    return inner\n",
+    )
+    .unwrap();
+    fs::write(
+        new.join("nested.py"),
+        "def outer(flag):\n    def inner(x):\n        return x\n    return inner\n",
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0]["action"], "signature_changed");
+    assert_eq!(changes[0]["name"], "outer");
+}
+
+#[test]
+fn source_mode_reports_nested_rust_signature_changes_on_the_nested_function() {
+    let (_temporary, old, new) = roots();
+    fs::write(
+        old.join("nested.rs"),
+        "fn outer() { fn inner(value: u8) {} }\n",
+    )
+    .unwrap();
+    fs::write(
+        new.join("nested.rs"),
+        "fn outer() { fn inner(value: u16) {} }\n",
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0]["action"], "signature_changed");
+    assert_eq!(changes[0]["kind"], "function");
+    assert_eq!(changes[0]["name"], "outer::inner");
+}
+
+#[test]
+fn source_mode_keeps_python_local_helpers_inside_methods_as_functions() {
+    let (_temporary, old, new) = roots();
+    fs::write(old.join("auth.py"), "").unwrap();
+    fs::write(
+        new.join("auth.py"),
+        "class Auth:\n    def login(self):\n        def helper(value):\n            return value\n        return helper\n",
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert!(changes.iter().any(|change| {
+        change["action"] == "added"
+            && change["kind"] == "function"
+            && change["name"] == "Auth::login::helper"
+    }));
+    assert!(
+        !changes.iter().any(|change| {
+            change["kind"] == "method" && change["name"] == "Auth::login::helper"
+        })
+    );
+}
+
+#[test]
+fn source_mode_keeps_rust_local_helpers_inside_methods_as_functions() {
+    let (_temporary, old, new) = roots();
+    fs::write(old.join("auth.rs"), "struct Auth;\n").unwrap();
+    fs::write(
+        new.join("auth.rs"),
+        "struct Auth;\nimpl Auth { fn login(&self) { fn helper(value: u8) {} } }\n",
+    )
+    .unwrap();
+
+    let output = run_source_compare(&old, &new);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = report["source_changes"][0]["structural_changes"]
+        .as_array()
+        .unwrap();
+    assert!(changes.iter().any(|change| {
+        change["action"] == "added"
+            && change["kind"] == "function"
+            && change["name"] == "Auth::login::helper"
+    }));
+    assert!(
+        !changes
+            .iter()
+            .any(|change| change["kind"] == "method" && change["name"] == "Auth::login::helper")
+    );
+}
+
+#[test]
 fn source_mode_does_not_report_rust_method_body_changes_as_signature_changes() {
     let (_temporary, old, new) = roots();
     fs::write(
