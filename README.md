@@ -2,7 +2,8 @@
 
 Semantic firmware diff and triage in Rust.
 
-**Experimental and under active development.** Linux comparison of two extracted root
+**Experimental beta, version `0.2.0-beta.1`.** The project remains under active
+development. Linux comparison of two extracted root
 filesystem directories is implemented, including exact bounded regular-file comparison
 and filesystem metadata. The direct CLI provides deterministic text and JSON schema v1
 reports for directory comparisons, plus bounded single-file inspection and file
