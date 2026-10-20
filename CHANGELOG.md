@@ -2,7 +2,7 @@
 
 Crucksware follows Semantic Versioning.
 
-## Unreleased
+## 0.2.0-beta.1
 
 - Add bounded inspection and semantic comparison for ELF and PE files while keeping
   exact byte changes separate from normalized format facts.
@@ -10,8 +10,10 @@ Crucksware follows Semantic Versioning.
   diffs for changed text files and static analysis for changed ELF and PE files.
 - Add single-file inspection and combined semantic reports. Directory comparison keeps
   JSON schema v1; file comparison, source-aware comparison, and inspection use schemas
-  v2, v4, and v5 respectively.
+  v6, v7, and v5 respectively.
 - Bound source parser and query work with deterministic cancellation limits.
+- Add deterministic readable summaries in English, French, Spanish, and Simplified
+  Chinese. Technical report details remain in English.
 
 ## 0.1.0
 
