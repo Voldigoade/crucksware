@@ -3,7 +3,11 @@ use serde_json::json;
 use crate::{
     binary_compare::{FileComparison, SemanticChange, SemanticComparisonStatus},
     input::InputKind,
-    report::binary::{write_html, write_json, write_markdown, write_text},
+    readable::Language,
+    report::binary::{
+        write_html, write_html_with_languages, write_json, write_markdown,
+        write_markdown_in_language, write_text,
+    },
 };
 
 fn comparison() -> FileComparison {
@@ -30,9 +34,12 @@ fn text_report_distinguishes_byte_and_semantic_changes() {
     write_text(&comparison(), &mut output).unwrap();
 
     let output = String::from_utf8(output).unwrap();
-    assert!(output.starts_with(
-        "Readable summary\nFile comparison: 2 inputs, 1 semantic field change.\nNotable changes:\n- File comparison\n  - E0001: binary field \"entry_point\" changed from \"4096\" to \"8192\".\n  - E0002: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n\n"
-    ));
+    assert!(
+        output.starts_with(
+            "Readable summary\nFile comparison: 2 inputs, 1 semantic field change.\nNotable changes:\n- File comparison\n  - E0001: binary field \"entry_point\" changed from \"4096\" to \"8192\".\n  - E0002: byte-level comparison changed; elf (10 bytes) to elf (11 bytes); semantic comparison: compared.\n\n"
+        ),
+        "{output}"
+    );
     assert!(output.ends_with(
         "File comparison\nOld: ELF (10 bytes)\nNew: ELF (11 bytes)\nByte-level changed: yes\nSemantic comparison: compared\nSemantic fields changed: 1\nentry_point\t\"4096\"\t\"8192\"\n"
     ));
@@ -54,6 +61,35 @@ fn text_file_comparison_summary_does_not_call_the_inputs_binaries() {
         "Readable summary\nFile comparison: 2 inputs, 0 semantic field changes.\nNotable changes:\n"
     ));
     assert!(!output.contains("Binary analysis"));
+}
+
+#[test]
+fn localized_file_comparison_summaries_translate_the_pathless_group_label() {
+    for (language, label) in [
+        (Language::French, "comparaison de fichiers"),
+        (Language::Spanish, "comparación de archivos"),
+        (Language::SimplifiedChinese, "文件比较"),
+    ] {
+        let mut markdown = Vec::new();
+        write_markdown_in_language(&comparison(), language, &mut markdown).unwrap();
+        let markdown = String::from_utf8(markdown).unwrap();
+        let readable_summary = markdown.split("\n## Summary").next().unwrap();
+        assert!(readable_summary.contains(label), "{language:?}: {markdown}");
+        assert!(
+            !readable_summary.contains("File comparison"),
+            "{language:?}: {markdown}"
+        );
+
+        let mut html = Vec::new();
+        write_html_with_languages(&comparison(), &[language], &mut html).unwrap();
+        let html = String::from_utf8(html).unwrap();
+        let readable_summary = html.split("</section>").next().unwrap();
+        assert!(readable_summary.contains(label), "{language:?}: {html}");
+        assert!(
+            !readable_summary.contains("File comparison"),
+            "{language:?}: {html}"
+        );
+    }
 }
 
 #[test]
@@ -212,4 +248,17 @@ fn html_file_report_is_offline_deterministic_and_escapes_semantic_values() {
     let mut repeated = Vec::new();
     write_html(&comparison, &mut repeated).unwrap();
     assert_eq!(repeated, output);
+}
+
+#[test]
+fn invalid_html_language_sets_leave_the_output_empty() {
+    for languages in [&[][..], &[Language::French, Language::French][..]] {
+        let mut output = Vec::new();
+        let error =
+            crate::report::binary::write_html_with_languages(&comparison(), languages, &mut output)
+                .expect_err("an empty or duplicate language set is invalid");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(output.is_empty());
+    }
 }

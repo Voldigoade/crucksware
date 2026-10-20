@@ -3,7 +3,8 @@ use std::io::{self, Write};
 use crate::{
     model::{Category, Change, ChangedField, Diff, Entry, Summary},
     path::RelPath,
-    report::html::write_html,
+    readable::Language,
+    report::html::{write_html, write_html_with_languages},
 };
 
 fn injection_diff() -> Diff {
@@ -159,4 +160,40 @@ fn propagates_report_write_errors() {
     let error = write_html(&Diff::default(), &mut FailingWriter).unwrap_err();
 
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+}
+
+#[test]
+fn html_embeds_only_requested_localized_summaries_and_switches_locally() {
+    let mut output = Vec::new();
+    write_html_with_languages(
+        &injection_diff(),
+        &[Language::French, Language::Spanish],
+        &mut output,
+    )
+    .unwrap();
+    let html = String::from_utf8(output).unwrap();
+
+    assert!(html.contains("Langue du résumé"));
+    assert!(html.contains("data-readable-summary-language=\"fr\""));
+    assert!(html.contains("data-readable-summary-language=\"es\""));
+    assert!(!html.contains("data-readable-summary-language=\"en\""));
+    assert!(html.contains("Résumé lisible"));
+    assert!(html.contains("Resumen legible"));
+    assert!(html.contains("id=\"summary-language\""));
+    assert!(html.contains("summary.hidden = summary.dataset.readableSummaryLanguage"));
+    assert!(html.contains("<html lang=\"en\">"));
+    assert!(html.contains("<h2 id=\"changes-heading\">Changes</h2>"));
+    assert!(!html.contains("https://"));
+}
+
+#[test]
+fn invalid_html_language_sets_do_not_write_a_document_prefix() {
+    for languages in [&[][..], &[Language::French, Language::French][..]] {
+        let mut output = Vec::new();
+        let error = write_html_with_languages(&injection_diff(), languages, &mut output)
+            .expect_err("an empty or duplicate language set is invalid");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(output.is_empty());
+    }
 }
