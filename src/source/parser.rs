@@ -352,6 +352,10 @@ fn qualified_name(
             | (SourceLanguage::C, "struct_specifier") => node
                 .child_by_field_name("name")
                 .and_then(|scope_node| node_text(scope_node, source)),
+            (SourceLanguage::Rust, "function_item")
+            | (SourceLanguage::Python, "function_definition") => node
+                .child_by_field_name("name")
+                .and_then(|scope_node| node_text(scope_node, source)),
             (SourceLanguage::Rust, "impl_item") => node
                 .child_by_field_name("type")
                 .and_then(|type_node| node_text(type_node, source))
@@ -379,8 +383,11 @@ fn qualified_name(
 
 fn is_member(language: SourceLanguage, definition: Node<'_>) -> bool {
     if language == SourceLanguage::Rust {
-        let mut node = Some(definition);
+        let mut node = definition.parent();
         while let Some(current) = node {
+            if matches!(current.kind(), "function_item" | "function_signature_item") {
+                return false;
+            }
             if current.kind() == "declaration_list" {
                 return current
                     .parent()
@@ -396,6 +403,7 @@ fn is_member(language: SourceLanguage, definition: Node<'_>) -> bool {
         match (language, node.kind()) {
             (SourceLanguage::Cpp, "field_declaration_list" | "class_specifier")
             | (SourceLanguage::Python, "class_definition") => return true,
+            (SourceLanguage::Python, "function_definition") => return false,
             _ => {}
         }
         parent = node.parent();
@@ -405,26 +413,26 @@ fn is_member(language: SourceLanguage, definition: Node<'_>) -> bool {
 
 fn signature(node: Node<'_>, source: &str) -> Option<String> {
     let mut container = node;
-    let mut parent = node.parent();
-    while let Some(candidate) = parent {
+    let mut candidate = Some(node);
+    while let Some(current) = candidate {
         if matches!(
-            candidate.kind(),
+            current.kind(),
             "function_item"
                 | "function_signature_item"
                 | "function_definition"
                 | "declaration"
                 | "function_declaration"
         ) {
-            container = candidate;
+            container = current;
             break;
         }
         if matches!(
-            candidate.kind(),
+            current.kind(),
             "source_file" | "translation_unit" | "module"
         ) {
             break;
         }
-        parent = candidate.parent();
+        candidate = current.parent();
     }
     let end_byte = container
         .child_by_field_name("body")
