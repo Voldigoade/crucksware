@@ -73,11 +73,6 @@ fn parse_report_arguments(
     let (format, arguments) = arguments
         .split_once(char::is_whitespace)
         .map_or((arguments, ""), |(format, rest)| (format, rest));
-    let arguments = if arguments.trim_start().starts_with("--") {
-        arguments.trim_start()
-    } else {
-        arguments
-    };
     let format = match format {
         "text" => ReportFormat::Text,
         "json" => ReportFormat::Json,
@@ -90,7 +85,7 @@ fn parse_report_arguments(
     match format {
         ReportFormat::Markdown => {
             if let Some((language, output_argument)) =
-                take_language_option(arguments, "--language")?
+                take_language_option(arguments.trim_start(), "--language")?
             {
                 Ok(ReportOptions {
                     format,
@@ -98,8 +93,6 @@ fn parse_report_arguments(
                     html_languages: vec![preferred_language],
                     output_argument,
                 })
-            } else if arguments.starts_with("--") {
-                Err("Markdown reports accept `--language <en|fr|es|zh-CN>`".to_owned())
             } else {
                 Ok(ReportOptions {
                     format,
@@ -111,7 +104,7 @@ fn parse_report_arguments(
         }
         ReportFormat::Html => {
             if let Some((languages, output_argument)) =
-                take_languages_option(arguments, "--languages")?
+                take_languages_option(arguments.trim_start(), "--languages")?
             {
                 Ok(ReportOptions {
                     format,
@@ -119,8 +112,6 @@ fn parse_report_arguments(
                     html_languages: languages,
                     output_argument,
                 })
-            } else if arguments.starts_with("--") {
-                Err("HTML reports accept `--languages <en,fr,...>`".to_owned())
             } else {
                 Ok(ReportOptions {
                     format,
@@ -130,18 +121,12 @@ fn parse_report_arguments(
                 })
             }
         }
-        ReportFormat::Text | ReportFormat::Json => {
-            if arguments.starts_with("--") {
-                Err("language options are available for Markdown and HTML reports".to_owned())
-            } else {
-                Ok(ReportOptions {
-                    format,
-                    language: preferred_language,
-                    html_languages: vec![preferred_language],
-                    output_argument: arguments,
-                })
-            }
-        }
+        ReportFormat::Text | ReportFormat::Json => Ok(ReportOptions {
+            format,
+            language: preferred_language,
+            html_languages: vec![preferred_language],
+            output_argument: arguments,
+        }),
     }
 }
 
