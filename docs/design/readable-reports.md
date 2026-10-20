@@ -58,10 +58,10 @@ derived from those facts and is not serialized as an additional field in this
 milestone, so existing schema meanings do not change. A future change that serializes
 summary-specific data must introduce and document a schema version explicitly.
 
-Only English deterministic wording is included initially. The evaluated models did not
-qualify English, French, Spanish, and Simplified Chinese output for this evidence task,
-so the product does not claim those languages are supported. Localization can be added
-after its own factual and terminology review.
+Deterministic summary wording is available in English, French, Spanish, and Simplified
+Chinese. This localizes the presentation of structured facts; paths, identifiers, and
+technical values remain unchanged. Native-speaker review has not been completed, so
+translations may still need terminology corrections.
 
 ## Failure behavior
 
