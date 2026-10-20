@@ -433,13 +433,24 @@ fn quoted(value: Option<&str>) -> String {
 fn display_safe(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for character in value.chars() {
-        if character.is_control() {
+        if character.is_control() || is_bidi_formatting(character) {
             output.push_str(&format!("\\u{{{:X}}}", character as u32));
         } else {
             output.push(character);
         }
     }
     output
+}
+
+fn is_bidi_formatting(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061C}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{206F}'
+    )
 }
 
 fn byte_change_text(changed: Option<bool>) -> &'static str {
