@@ -13,6 +13,7 @@ use crucksware::{
     inspection::{DEFAULT_MAX_BYTES_READ, DEFAULT_MAX_ENTRIES, inspect_file_with_limits},
     limits::Limits,
     model::Diff,
+    readable::Language,
     report,
     semantic_tree::SemanticTreeDiff,
     source::{DEFAULT_MAX_SOURCE_FILE_BYTES, MAX_SOURCE_FILE_BYTES},
@@ -50,6 +51,21 @@ struct CompareArgs {
         help = "Report format: text, JSON, Markdown, or offline HTML"
     )]
     format: OutputFormat,
+
+    #[arg(
+        long,
+        value_parser = parse_language,
+        help = "Language for readable text or Markdown summaries and single-language HTML"
+    )]
+    language: Option<Language>,
+
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_parser = parse_language,
+        help = "Comma-separated summary languages for HTML, for example en,fr,zh-CN"
+    )]
+    languages: Option<Vec<Language>>,
 
     #[arg(
         long,
@@ -131,6 +147,40 @@ enum OutputFormat {
     Html,
 }
 
+#[derive(Clone, Debug)]
+struct ReportLanguages {
+    summary: Language,
+    html: Vec<Language>,
+}
+
+fn report_languages(args: &CompareArgs) -> Result<ReportLanguages, String> {
+    if args.language.is_some() && args.languages.is_some() {
+        return Err("use either --language or --languages, not both".to_owned());
+    }
+    if args.languages.is_some() && args.format != OutputFormat::Html {
+        return Err("--languages is only valid with --format=html".to_owned());
+    }
+    if args.format == OutputFormat::Json && args.language.is_some() {
+        return Err(
+            "JSON reports are language-neutral; --language is not valid with --format=json"
+                .to_owned(),
+        );
+    }
+
+    let summary = args.language.unwrap_or_default();
+    let html = if args.format == OutputFormat::Html {
+        args.languages.clone().unwrap_or_else(|| vec![summary])
+    } else {
+        Vec::new()
+    };
+    for (index, language) in html.iter().enumerate() {
+        if html[..index].contains(language) {
+            return Err("HTML summary languages must be unique".to_owned());
+        }
+    }
+    Ok(ReportLanguages { summary, html })
+}
+
 fn main() -> ExitCode {
     if std::env::args_os().nth(1).is_none() {
         return interactive::run();
@@ -169,6 +219,13 @@ fn run_inspect(args: InspectArgs) -> ExitCode {
 }
 
 fn run_compare(args: CompareArgs) -> ExitCode {
+    let languages = match report_languages(&args) {
+        Ok(languages) => languages,
+        Err(error) => {
+            eprintln!("crucksware: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let old_shape = match comparison_input_shape(&args.old) {
         Ok(shape) => shape,
         Err(error) => {
@@ -186,13 +243,13 @@ fn run_compare(args: CompareArgs) -> ExitCode {
     match (old_shape, new_shape) {
         (CompareInputShape::Directory, CompareInputShape::Directory) => {
             if args.source_aware {
-                run_source_compare(&args)
+                run_source_compare(&args, &languages)
             } else {
-                run_tree_compare(&args)
+                run_tree_compare(&args, &languages)
             }
         }
         (CompareInputShape::File, CompareInputShape::File) if !args.source_aware => {
-            run_file_compare(&args)
+            run_file_compare(&args, &languages)
         }
         (CompareInputShape::File, CompareInputShape::File) => {
             eprintln!("crucksware: source-aware comparison requires two directories");
@@ -228,7 +285,7 @@ fn comparison_input_shape(path: &Path) -> Result<CompareInputShape, InputError> 
     }
 }
 
-fn run_tree_compare(args: &CompareArgs) -> ExitCode {
+fn run_tree_compare(args: &CompareArgs, languages: &ReportLanguages) -> ExitCode {
     let limits = Limits {
         max_entries: args.max_entries,
         max_depth: args.max_depth,
@@ -244,7 +301,7 @@ fn run_tree_compare(args: &CompareArgs) -> ExitCode {
         }
     };
 
-    if let Err(error) = write_report(&diff, args.format) {
+    if let Err(error) = write_report(&diff, args.format, languages) {
         eprintln!("crucksware: failed to write report: {error}");
         return ExitCode::from(2);
     }
@@ -252,7 +309,7 @@ fn run_tree_compare(args: &CompareArgs) -> ExitCode {
     ExitCode::from(u8::from(!diff.changes.is_empty()))
 }
 
-fn run_file_compare(args: &CompareArgs) -> ExitCode {
+fn run_file_compare(args: &CompareArgs, languages: &ReportLanguages) -> ExitCode {
     let comparison =
         match compare_files(&args.old, &args.new, args.max_bytes_read, args.max_entries) {
             Ok(comparison) => comparison,
@@ -262,7 +319,7 @@ fn run_file_compare(args: &CompareArgs) -> ExitCode {
             }
         };
 
-    if let Err(error) = write_file_report(&comparison, args.format) {
+    if let Err(error) = write_file_report(&comparison, args.format, languages) {
         eprintln!("crucksware: failed to write report: {error}");
         return ExitCode::from(2);
     }
@@ -273,7 +330,7 @@ fn run_file_compare(args: &CompareArgs) -> ExitCode {
     ExitCode::from(u8::from(changed))
 }
 
-fn run_source_compare(args: &CompareArgs) -> ExitCode {
+fn run_source_compare(args: &CompareArgs, languages: &ReportLanguages) -> ExitCode {
     let limits = Limits {
         max_entries: args.max_entries,
         max_depth: args.max_depth,
@@ -293,7 +350,7 @@ fn run_source_compare(args: &CompareArgs) -> ExitCode {
         }
     };
 
-    if let Err(error) = write_semantic_tree_report(&diff, args.format) {
+    if let Err(error) = write_semantic_tree_report(&diff, args.format, languages) {
         eprintln!("crucksware: failed to write report: {error}");
         return ExitCode::from(2);
     }
@@ -301,40 +358,79 @@ fn run_source_compare(args: &CompareArgs) -> ExitCode {
     ExitCode::from(u8::from(!diff.filesystem.changes.is_empty()))
 }
 
-fn write_report(diff: &Diff, format: OutputFormat) -> io::Result<()> {
+fn write_report(diff: &Diff, format: OutputFormat, languages: &ReportLanguages) -> io::Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     match format {
-        OutputFormat::Text => report::text::write_text(diff, &mut output)?,
+        OutputFormat::Text => {
+            report::text::write_text_in_language(diff, languages.summary, &mut output)?
+        }
         OutputFormat::Json => report::json::write_json(diff, &mut output)?,
-        OutputFormat::Markdown => report::markdown::write_markdown(diff, &mut output)?,
-        OutputFormat::Html => report::html::write_html(diff, &mut output)?,
+        OutputFormat::Markdown => {
+            report::markdown::write_markdown_in_language(diff, languages.summary, &mut output)?
+        }
+        OutputFormat::Html => {
+            report::html::write_html_with_languages(diff, &languages.html, &mut output)?
+        }
     }
     output.flush()
 }
 
-fn write_file_report(comparison: &FileComparison, format: OutputFormat) -> io::Result<()> {
+fn write_file_report(
+    comparison: &FileComparison,
+    format: OutputFormat,
+    languages: &ReportLanguages,
+) -> io::Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     match format {
-        OutputFormat::Text => report::binary::write_text(comparison, &mut output)?,
+        OutputFormat::Text => {
+            report::binary::write_text_in_language(comparison, languages.summary, &mut output)?
+        }
         OutputFormat::Json => report::binary::write_json(comparison, &mut output)?,
-        OutputFormat::Markdown => report::binary::write_markdown(comparison, &mut output)?,
-        OutputFormat::Html => report::binary::write_html(comparison, &mut output)?,
+        OutputFormat::Markdown => {
+            report::binary::write_markdown_in_language(comparison, languages.summary, &mut output)?
+        }
+        OutputFormat::Html => {
+            report::binary::write_html_with_languages(comparison, &languages.html, &mut output)?
+        }
     }
     output.flush()
 }
 
-fn write_semantic_tree_report(diff: &SemanticTreeDiff, format: OutputFormat) -> io::Result<()> {
+fn write_semantic_tree_report(
+    diff: &SemanticTreeDiff,
+    format: OutputFormat,
+    languages: &ReportLanguages,
+) -> io::Result<()> {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     match format {
-        OutputFormat::Text => report::semantic_tree::write_text(diff, &mut output)?,
+        OutputFormat::Text => {
+            report::semantic_tree::write_text_in_language(diff, languages.summary, &mut output)?
+        }
         OutputFormat::Json => report::semantic_tree::write_json(diff, &mut output)?,
-        OutputFormat::Markdown => report::semantic_tree::write_markdown(diff, &mut output)?,
-        OutputFormat::Html => report::semantic_tree::write_html(diff, &mut output)?,
+        OutputFormat::Markdown => {
+            report::semantic_tree::write_markdown_in_language(diff, languages.summary, &mut output)?
+        }
+        OutputFormat::Html => {
+            report::semantic_tree::write_html_with_languages(diff, &languages.html, &mut output)?
+        }
     }
     output.flush()
+}
+
+fn parse_language(value: &str) -> Result<Language, String> {
+    Language::parse(value).ok_or_else(|| {
+        format!(
+            "must be one of: {}",
+            Language::ALL
+                .iter()
+                .map(|language| language.code())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
 }
 
 fn parse_positive_u64(value: &str) -> Result<u64, String> {

@@ -30,21 +30,27 @@ this decision does not claim that a translation-model benchmark was performed.
 
 ## Language selection
 
-Interactive sessions default to English. The `language` command changes the language
-used by the next analysis summary and by `last`. Markdown export can select one
-summary language. HTML export can embed an explicitly requested set of summaries and
-switch between them locally; it does not generate every language unless requested.
-The direct comparison command uses the same language options for its readable
-summary. JSON remains language-neutral.
+Interactive sessions default to English. `language` displays the current setting and
+accepts `en`, `fr`, `es`, or `zh-CN`; it changes comparison summaries, `last`, and
+`explain` for that session only. It does not persist the preference. Inspection reports
+remain in English.
+
+The direct comparison command accepts `--language` for text and Markdown summaries and
+for a single-language HTML report. HTML accepts `--languages en,fr,...` to embed an
+explicit set of summaries. Interactive Markdown accepts `report markdown --language fr`;
+interactive HTML accepts `report html --languages en,fr,es`. A report with one requested
+HTML language has no selector. JSON remains language-neutral, and technical report details
+remain canonical English.
 
 The HTML selector changes only the visible summary. The technical details below it
 remain in their stable form. A report with one requested language has no selector.
 
 ## Validation
 
-Tests cover every summary template in all four languages, count forms, empty reports,
-identifiers and encoded paths, long values, HTML switching, and unchanged technical
-report data. The template strings should remain short and use consistent terminology.
+Tests cover the summary template families in all four languages, singular and plural
+counts, empty reports, identifiers and encoded paths, HTML switching, CLI and shell
+selection, and unchanged technical report data. The template strings should remain short
+and use consistent terminology.
 Translation quality has not been reviewed by native speakers; that remains a
 limitation until such review is available.
 

@@ -72,6 +72,8 @@ fn help_version_and_usage_errors_use_the_documented_streams_and_statuses() {
     let compare_help_text = String::from_utf8(compare_help.stdout).unwrap();
     for option in [
         "--format",
+        "--language",
+        "--languages",
         "--max-entries",
         "--max-depth",
         "--max-path-bytes",
@@ -699,4 +701,94 @@ fn output_write_failure_exits_two() {
 
     assert_eq!(status.code(), Some(2));
     assert!(!stderr.is_empty());
+}
+
+#[test]
+fn compare_localizes_markdown_summary_and_embeds_only_requested_html_languages() {
+    let (_temporary, old, new) = roots();
+    fs::write(new.join("new.conf"), b"value=1\n").unwrap();
+
+    let markdown = run_compare(&old, &new, &["--format=markdown", "--language=fr"]);
+    assert_eq!(markdown.status.code(), Some(1));
+    assert!(markdown.stderr.is_empty());
+    let markdown = String::from_utf8(markdown.stdout).unwrap();
+    assert!(markdown.contains("## Résumé lisible"));
+    assert!(markdown.contains("Système de fichiers"));
+    assert!(markdown.contains("# Crucksware report"));
+    assert!(markdown.contains("## Summary"));
+
+    let html = run_compare(&old, &new, &["--format=html", "--languages=en,fr,zh-CN"]);
+    assert_eq!(html.status.code(), Some(1));
+    assert!(html.stderr.is_empty());
+    let html = String::from_utf8(html.stdout).unwrap();
+    assert!(html.contains("id=\"summary-language\""));
+    assert!(html.contains("data-readable-summary-language=\"en\""));
+    assert!(html.contains("data-readable-summary-language=\"fr\""));
+    assert!(html.contains("data-readable-summary-language=\"zh-CN\""));
+    assert!(!html.contains("data-readable-summary-language=\"es\""));
+    assert!(html.contains("<h2 id=\"changes-heading\">Changes</h2>"));
+    assert!(!html.contains("https://"));
+}
+
+#[test]
+fn compare_rejects_language_options_that_do_not_match_the_report_format() {
+    let (_temporary, old, new) = roots();
+    fs::write(new.join("new.conf"), b"value=1\n").unwrap();
+
+    for options in [
+        &["--format=json", "--language=fr"][..],
+        &["--format=markdown", "--languages=en,fr"][..],
+        &["--format=html", "--language=fr", "--languages=en,fr"][..],
+        &["--format=html", "--languages=fr,fr"][..],
+    ] {
+        let output = run_compare(&old, &new, options);
+        assert_eq!(output.status.code(), Some(2), "{options:?}");
+        assert!(output.stdout.is_empty(), "{options:?}");
+        assert!(!output.stderr.is_empty(), "{options:?}");
+    }
+}
+
+#[test]
+fn compare_localizes_text_and_keeps_json_language_neutral() {
+    let (_temporary, old, new) = roots();
+    fs::write(new.join("new.conf"), b"value=1\n").unwrap();
+
+    let text = run_compare(&old, &new, &["--format=text", "--language=es"]);
+    assert_eq!(text.status.code(), Some(1));
+    assert!(text.stderr.is_empty());
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.starts_with("Resumen legible\n"));
+    assert!(text.contains("Sistema de archivos"));
+
+    let json = run_compare(&old, &new, &["--format=json"]);
+    assert_eq!(json.status.code(), Some(1));
+    assert!(json.stderr.is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(json["schema_version"], 1);
+    assert!(json.get("language").is_none());
+}
+
+#[test]
+fn file_comparison_localizes_pathless_readable_labels() {
+    let temporary = tempfile::tempdir().unwrap();
+    let old = temporary.path().join("old-input");
+    let new = temporary.path().join("new-input");
+    fs::write(&old, b"old text\n").unwrap();
+    fs::write(&new, b"new text\n").unwrap();
+
+    let markdown = run_compare(&old, &new, &["--format=markdown", "--language=fr"]);
+    assert_eq!(markdown.status.code(), Some(1));
+    assert!(markdown.stderr.is_empty());
+    let markdown = String::from_utf8(markdown.stdout).unwrap();
+    let summary = markdown.split("\n## Summary").next().unwrap();
+    assert!(summary.contains("comparaison de fichiers"), "{markdown}");
+    assert!(!summary.contains("File comparison"), "{markdown}");
+
+    let html = run_compare(&old, &new, &["--format=html", "--languages=fr"]);
+    assert_eq!(html.status.code(), Some(1));
+    assert!(html.stderr.is_empty());
+    let html = String::from_utf8(html.stdout).unwrap();
+    let summary = html.split("</section>").next().unwrap();
+    assert!(summary.contains("comparaison de fichiers"), "{html}");
+    assert!(!summary.contains("File comparison"), "{html}");
 }
