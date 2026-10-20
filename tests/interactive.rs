@@ -1,5 +1,6 @@
 use std::{
     io::Write,
+    path::Path,
     process::{Command, Stdio},
 };
 
@@ -26,6 +27,7 @@ fn no_arguments_starts_a_shell_that_handles_help_unknown_commands_and_exit() {
     assert!(stdout.contains("anal"));
     assert!(stdout.contains("analyze"));
     assert!(stdout.contains("explain"));
+    assert!(stdout.contains("language"));
     assert!(!stdout.contains("\u{1b}["));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr)
@@ -915,13 +917,20 @@ fn failed_analysis_does_not_replace_the_last_successful_result() {
 }
 
 fn run_shell(input: &[u8]) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_crucksware"))
+    run_shell_at(input, None)
+}
+
+fn run_shell_at(input: &[u8], current_dir: Option<&Path>) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crucksware"));
+    command
         .env("TERM", "dumb")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("binary starts");
+        .stderr(Stdio::piped());
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
+    let mut child = command.spawn().expect("binary starts");
     child
         .stdin
         .take()
@@ -929,4 +938,128 @@ fn run_shell(input: &[u8]) -> std::process::Output {
         .write_all(input)
         .expect("commands are written");
     child.wait_with_output().expect("shell exits")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn report_options_preserve_intentional_leading_spaces_in_relative_output_names() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old");
+    let new = temporary.path().join("new");
+    let text_report = temporary.path().join(" report.txt");
+    let markdown_report = temporary.path().join(" report.md");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("added"), b"new").expect("new file is written");
+
+    let input = b"anal\n3\n1\nold\nnew\nreport text  report.txt\nreport markdown --language fr  report.md\nexit\n";
+    let output = run_shell_at(input, Some(temporary.path()));
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert!(std::fs::read_to_string(text_report).is_ok());
+    let markdown = std::fs::read_to_string(markdown_report)
+        .expect("leading-space Markdown destination is written");
+    assert!(markdown.contains("## Résumé lisible"));
+    assert!(!temporary.path().join("report.txt").exists());
+    assert!(!temporary.path().join("report.md").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn language_command_localizes_comparison_last_explain_and_report_summaries() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old rootfs");
+    let new = temporary.path().join("new rootfs");
+    let markdown_path = temporary.path().join("localized report.md");
+    let html_path = temporary.path().join("multi-language report.html");
+    std::fs::create_dir(&old).expect("old rootfs is created");
+    std::fs::create_dir(&new).expect("new rootfs is created");
+    std::fs::write(new.join("new.conf"), b"value=1\n").expect("new file is written");
+
+    let input = format!(
+        "language fr\nanal\n3\n1\n{}\n{}\nlast\nexplain E0001\nreport markdown --language es {}\nreport html --languages en,fr,zh-CN {}\nexit\n",
+        old.display(),
+        new.display(),
+        markdown_path.display(),
+        html_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("shell output is UTF-8");
+    assert!(stdout.contains("Comparison summary language: Français (fr)."));
+    assert!(stdout.contains("Système de fichiers"));
+    assert!(stdout.contains("Last analysis."));
+    assert!(stdout.contains("Preuve E0001"));
+    assert!(stdout.contains("Fait:"));
+
+    let markdown = std::fs::read_to_string(markdown_path).expect("Markdown report is written");
+    assert!(markdown.contains("## Resumen legible"));
+    assert!(markdown.contains("Sistema de archivos"));
+    assert!(markdown.contains("## Summary"));
+
+    let html = std::fs::read_to_string(html_path).expect("HTML report is written");
+    assert!(html.contains("id=\"summary-language\""));
+    assert!(html.contains("data-readable-summary-language=\"en\""));
+    assert!(html.contains("data-readable-summary-language=\"fr\""));
+    assert!(html.contains("data-readable-summary-language=\"zh-CN\""));
+    assert!(!html.contains("data-readable-summary-language=\"es\""));
+}
+
+#[test]
+fn language_command_shows_available_codes_and_rejects_unknown_values() {
+    let output = run_shell(b"language\nlanguage fr\nlanguage\nlanguage fr extra\nexit\n");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("shell output is UTF-8");
+    assert!(stdout.contains("Comparison summary language: English (en)."));
+    assert!(stdout.contains("Available: en, fr, es, zh-CN."));
+    assert!(stdout.contains("Comparison summary language: Français (fr)."));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .matches("Usage: language")
+            .count(),
+        1
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn language_command_localizes_file_comparison_and_exports() {
+    let temporary = tempfile::tempdir().expect("temporary directory is created");
+    let old = temporary.path().join("old input");
+    let new = temporary.path().join("new input");
+    let markdown_path = temporary.path().join("file report.md");
+    let html_path = temporary.path().join("file report.html");
+    std::fs::write(&old, b"old text\n").expect("old file is written");
+    std::fs::write(&new, b"new text\n").expect("new file is written");
+
+    let input = format!(
+        "language fr\nanal\n2\n{}\n{}\nlast\nreport markdown --language fr {}\nreport html --languages fr {}\nexit\n",
+        old.display(),
+        new.display(),
+        markdown_path.display(),
+        html_path.display()
+    );
+    let output = run_shell(input.as_bytes());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("shell output is UTF-8");
+    assert!(stdout.contains("Comparaison de fichiers"));
+    assert!(stdout.contains("Last file comparison."));
+
+    let markdown = std::fs::read_to_string(markdown_path)
+        .expect("localized file comparison Markdown report is written");
+    let summary = markdown.split("\n## Summary").next().unwrap();
+    assert!(summary.contains("comparaison de fichiers"), "{markdown}");
+    assert!(!summary.contains("File comparison"), "{markdown}");
+
+    let html = std::fs::read_to_string(html_path)
+        .expect("localized file comparison HTML report is written");
+    let summary = html.split("</section>").next().unwrap();
+    assert!(summary.contains("comparaison de fichiers"), "{html}");
+    assert!(!summary.contains("File comparison"), "{html}");
 }

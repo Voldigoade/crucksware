@@ -38,6 +38,9 @@ documents source-aware and mixed-directory comparison and their limits.
 crucksware compare old-rootfs/ new-rootfs/
 crucksware compare --format json old-rootfs/ new-rootfs/
 crucksware compare --format html old-rootfs/ new-rootfs/
+crucksware compare --language fr old-rootfs/ new-rootfs/
+crucksware compare --format markdown --language fr old-rootfs/ new-rootfs/
+crucksware compare --format html --languages en,fr,zh-CN old-rootfs/ new-rootfs/
 crucksware compare --source-aware project-v1/ project-v2/
 crucksware compare --source-aware --format markdown project-v1/ project-v2/
 crucksware compare old-program new-program
@@ -52,6 +55,12 @@ exact byte-level changes separately from normalized ELF or PE facts. If the dete
 formats differ, the report identifies the mismatch. Unknown files receive exact byte
 comparison only. The command exits with status 0 when no change is found, 1 when a change
 is found, and 2 when comparison or output fails. See `crucksware compare --help` for limits.
+Readable comparison summaries support `en`, `fr`, `es`, and `zh-CN`. `--language` selects
+text or Markdown summaries and a single-language HTML summary. HTML can embed multiple
+summaries with `--languages`; its selector switches locally. Technical report details
+remain in English, and JSON is language-neutral. The direct CLI does not detect a system
+locale.
+
 `inspect` parses bounded ELF and PE structure without executing the input. Both formats
 are limited to 64 MiB and 100,000 reported records by default. PE output includes
 sections, imports, exports, resource metadata, CodeView PDB identity where present, and
@@ -80,10 +89,15 @@ Run `crucksware` without arguments to start the shell. Use `anal` or `analyze` t
 between inspecting one input, comparing two files, and comparing two directories. The
 shell supports filesystem and source-aware directory comparison. Use `last` to review
 the most recent successful result.
-`report text [OUTPUT]`, `report json [OUTPUT]`, `report markdown [OUTPUT]`, and
-`report html [OUTPUT]` export the latest analysis. The shell prompts for an output path
+`language` shows the current comparison-summary language; `language fr` selects French
+for subsequent comparison summaries, `last`, and `explain` in this session. The default is
+English and the setting is not persisted. `report text [OUTPUT]` and `report json [OUTPUT]`
+export the latest analysis. Markdown accepts `report markdown --language fr [OUTPUT]`.
+HTML accepts `report html --languages en,fr,es [OUTPUT]`; only those summaries are embedded,
+and the browser selector switches between them offline. The shell prompts for an output path
 when omitted and asks before replacing an existing file. It does not save analysis history
-automatically. Report destinations inside compared directories, at an analyzed file path,
+automatically. Inspection reports remain in English, and JSON stays language-neutral.
+Report destinations inside compared directories, at an analyzed file path,
 symbolic-link destinations, and existing files with multiple hard links are refused.
 Replacing any existing report is also refused on non-Unix platforms because stable
 standard APIs do not expose the hard-link count there. Reports are rendered to a temporary

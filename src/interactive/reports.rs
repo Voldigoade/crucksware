@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crucksware::report;
+use crucksware::{readable::Language, report};
 use rustyline::{DefaultEditor, error::ReadlineError};
 use tempfile::NamedTempFile;
 
@@ -24,22 +24,10 @@ enum ReportDestination {
 }
 
 pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session: &Session) {
-    let arguments = arguments.trim_start();
-    let (format, output_argument) = match arguments.split_once(char::is_whitespace) {
-        Some((format, output_argument)) => (format, output_argument),
-        None => (arguments, ""),
-    };
-    if format.is_empty() {
-        eprintln!("Usage: report <text|json|markdown|html> [OUTPUT]");
-        return;
-    }
-    let format = match format {
-        "text" => ReportFormat::Text,
-        "json" => ReportFormat::Json,
-        "markdown" => ReportFormat::Markdown,
-        "html" => ReportFormat::Html,
-        _ => {
-            eprintln!("crucksware: report format must be `text`, `json`, `markdown`, or `html`");
+    let options = match parse_report_arguments(arguments, session.language) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("crucksware: {error}");
             return;
         }
     };
@@ -47,20 +35,171 @@ pub(super) fn export_report(arguments: &str, editor: &mut DefaultEditor, session
         println!("No analysis has been completed in this session.");
         return;
     };
-    let output_path = if output_argument.is_empty() {
+    let output_path = if options.output_argument.is_empty() {
         match prompt_report_path(editor) {
             Some(path) => path,
             None => return,
         }
     } else {
-        PathBuf::from(output_argument)
+        PathBuf::from(options.output_argument)
     };
 
-    match write_report(last, &output_path, format, editor) {
+    match write_report(
+        last,
+        &output_path,
+        options.format,
+        options.language,
+        &options.html_languages,
+        editor,
+    ) {
         Ok(true) => println!("Report written."),
         Ok(false) => println!("Report export cancelled."),
         Err(error) => eprintln!("crucksware: failed to write report: {error}"),
     }
+}
+
+struct ReportOptions<'a> {
+    format: ReportFormat,
+    language: Language,
+    html_languages: Vec<Language>,
+    output_argument: &'a str,
+}
+
+fn parse_report_arguments(
+    arguments: &str,
+    preferred_language: Language,
+) -> Result<ReportOptions<'_>, String> {
+    let arguments = arguments.trim_start();
+    let (format, arguments) = arguments
+        .split_once(char::is_whitespace)
+        .map_or((arguments, ""), |(format, rest)| (format, rest));
+    let arguments = if arguments.trim_start().starts_with("--") {
+        arguments.trim_start()
+    } else {
+        arguments
+    };
+    let format = match format {
+        "text" => ReportFormat::Text,
+        "json" => ReportFormat::Json,
+        "markdown" => ReportFormat::Markdown,
+        "html" => ReportFormat::Html,
+        "" => return Err("Usage: report <text|json|markdown|html> [OPTIONS] [OUTPUT]".to_owned()),
+        _ => return Err("report format must be `text`, `json`, `markdown`, or `html`".to_owned()),
+    };
+
+    match format {
+        ReportFormat::Markdown => {
+            if let Some((language, output_argument)) =
+                take_language_option(arguments, "--language")?
+            {
+                Ok(ReportOptions {
+                    format,
+                    language,
+                    html_languages: vec![preferred_language],
+                    output_argument,
+                })
+            } else if arguments.starts_with("--") {
+                Err("Markdown reports accept `--language <en|fr|es|zh-CN>`".to_owned())
+            } else {
+                Ok(ReportOptions {
+                    format,
+                    language: preferred_language,
+                    html_languages: vec![preferred_language],
+                    output_argument: arguments,
+                })
+            }
+        }
+        ReportFormat::Html => {
+            if let Some((languages, output_argument)) =
+                take_languages_option(arguments, "--languages")?
+            {
+                Ok(ReportOptions {
+                    format,
+                    language: preferred_language,
+                    html_languages: languages,
+                    output_argument,
+                })
+            } else if arguments.starts_with("--") {
+                Err("HTML reports accept `--languages <en,fr,...>`".to_owned())
+            } else {
+                Ok(ReportOptions {
+                    format,
+                    language: preferred_language,
+                    html_languages: vec![preferred_language],
+                    output_argument: arguments,
+                })
+            }
+        }
+        ReportFormat::Text | ReportFormat::Json => {
+            if arguments.starts_with("--") {
+                Err("language options are available for Markdown and HTML reports".to_owned())
+            } else {
+                Ok(ReportOptions {
+                    format,
+                    language: preferred_language,
+                    html_languages: vec![preferred_language],
+                    output_argument: arguments,
+                })
+            }
+        }
+    }
+}
+
+fn take_language_option<'a>(
+    arguments: &'a str,
+    option: &str,
+) -> Result<Option<(Language, &'a str)>, String> {
+    let Some(value_and_output) = take_option_value(arguments, option)? else {
+        return Ok(None);
+    };
+    let (value, output_argument) = split_value_and_output(value_and_output);
+    let language = Language::parse(value)
+        .ok_or_else(|| "language must be one of: en, fr, es, zh-CN".to_owned())?;
+    Ok(Some((language, output_argument)))
+}
+
+fn take_languages_option<'a>(
+    arguments: &'a str,
+    option: &str,
+) -> Result<Option<(Vec<Language>, &'a str)>, String> {
+    let Some(value_and_output) = take_option_value(arguments, option)? else {
+        return Ok(None);
+    };
+    let (value, output_argument) = split_value_and_output(value_and_output);
+    let mut languages = Vec::new();
+    for code in value.split(',') {
+        let language = Language::parse(code).ok_or_else(|| {
+            "languages must be a comma-separated list of en, fr, es, zh-CN".to_owned()
+        })?;
+        if languages.contains(&language) {
+            return Err("HTML summary languages must be unique".to_owned());
+        }
+        languages.push(language);
+    }
+    Ok(Some((languages, output_argument)))
+}
+
+fn take_option_value<'a>(arguments: &'a str, option: &str) -> Result<Option<&'a str>, String> {
+    let Some(rest) = arguments.strip_prefix(option) else {
+        return Ok(None);
+    };
+    let rest = if let Some(value) = rest.strip_prefix('=') {
+        value
+    } else if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        rest.trim_start()
+    } else {
+        return Ok(None);
+    };
+    if rest.is_empty() {
+        return Err(format!("{option} requires a value"));
+    }
+    Ok(Some(rest))
+}
+
+fn split_value_and_output(value_and_output: &str) -> (&str, &str) {
+    value_and_output
+        .split_once(char::is_whitespace)
+        .map_or((value_and_output, ""), |(value, output)| (value, output))
 }
 
 fn prompt_report_path(editor: &mut DefaultEditor) -> Option<PathBuf> {
@@ -85,6 +224,8 @@ fn write_report(
     last: &LastAnalysis,
     path: &Path,
     format: ReportFormat,
+    language: Language,
+    html_languages: &[Language],
     editor: &mut DefaultEditor,
 ) -> io::Result<bool> {
     let target = match last {
@@ -107,7 +248,7 @@ fn write_report(
     };
     let replace = matches!(destination, ReportDestination::Replace);
     publish_report(&target, replace, |file| {
-        write_report_contents(last, format, file)
+        write_report_contents(last, format, language, html_languages, file)
     })?;
     Ok(true)
 }
@@ -141,33 +282,35 @@ fn publish_report(
 fn write_report_contents(
     last: &LastAnalysis,
     format: ReportFormat,
+    language: Language,
+    html_languages: &[Language],
     file: &mut File,
 ) -> io::Result<()> {
     let mut output = BufWriter::new(file);
     match (last, format) {
         (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Text) => {
-            report::text::write_text(diff, &mut output)?
+            report::text::write_text_in_language(diff, language, &mut output)?
         }
         (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Json) => {
             report::json::write_json(diff, &mut output)?
         }
         (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Markdown) => {
-            report::markdown::write_markdown(diff, &mut output)?
+            report::markdown::write_markdown_in_language(diff, language, &mut output)?
         }
         (LastAnalysis::DirectoryComparison { diff, .. }, ReportFormat::Html) => {
-            report::html::write_html(diff, &mut output)?
+            report::html::write_html_with_languages(diff, html_languages, &mut output)?
         }
         (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Text) => {
-            report::semantic_tree::write_text(diff, &mut output)?
+            report::semantic_tree::write_text_in_language(diff, language, &mut output)?
         }
         (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Json) => {
             report::semantic_tree::write_json(diff, &mut output)?
         }
         (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Markdown) => {
-            report::semantic_tree::write_markdown(diff, &mut output)?
+            report::semantic_tree::write_markdown_in_language(diff, language, &mut output)?
         }
         (LastAnalysis::SourceAwareComparison { diff, .. }, ReportFormat::Html) => {
-            report::semantic_tree::write_html(diff, &mut output)?
+            report::semantic_tree::write_html_with_languages(diff, html_languages, &mut output)?
         }
         (LastAnalysis::FileInspection { inspection, .. }, ReportFormat::Text) => {
             report::inspection::write_inspection(inspection, &mut output)?
@@ -182,16 +325,16 @@ fn write_report_contents(
             report::inspection::write_html(inspection, &mut output)?
         }
         (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Text) => {
-            report::binary::write_text(comparison, &mut output)?
+            report::binary::write_text_in_language(comparison, language, &mut output)?
         }
         (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Json) => {
             report::binary::write_json(comparison, &mut output)?
         }
         (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Markdown) => {
-            report::binary::write_markdown(comparison, &mut output)?
+            report::binary::write_markdown_in_language(comparison, language, &mut output)?
         }
         (LastAnalysis::FileComparison { comparison, .. }, ReportFormat::Html) => {
-            report::binary::write_html(comparison, &mut output)?
+            report::binary::write_html_with_languages(comparison, html_languages, &mut output)?
         }
     }
     output.flush()

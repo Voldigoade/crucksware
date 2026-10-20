@@ -18,7 +18,7 @@ use crucksware::{
     limits::Limits,
     model::Diff,
     readable::{
-        EvidenceError, EvidencePacket, select_file_comparison, select_filesystem,
+        EvidenceError, EvidencePacket, Language, select_file_comparison, select_filesystem,
         select_semantic_tree,
     },
     report,
@@ -30,6 +30,7 @@ use rustyline::{DefaultEditor, config::Configurer, error::ReadlineError};
 struct Session {
     last_analysis: Option<LastAnalysis>,
     evidence: Option<EvidencePacket>,
+    language: Language,
 }
 
 enum LastAnalysis {
@@ -110,6 +111,7 @@ fn execute_command(
         "clear" if arguments.trim().is_empty() => clear_screen(),
         "anal" | "analyze" if arguments.trim().is_empty() => analyze(editor, session),
         "last" if arguments.trim().is_empty() => show_last(session),
+        "language" => set_language(arguments, session),
         "explain" => explain(arguments, session),
         "report" => reports::export_report(arguments, editor, session),
         "exit" | "quit" if arguments.trim().is_empty() => return false,
@@ -118,11 +120,33 @@ fn execute_command(
     true
 }
 
+fn set_language(arguments: &str, session: &mut Session) {
+    let value = arguments.trim();
+    if value.is_empty() {
+        println!(
+            "Comparison summary language: {} ({}).\nAvailable: en, fr, es, zh-CN.",
+            session.language.display_name(),
+            session.language.code()
+        );
+        return;
+    }
+    let Some(language) = Language::parse(value) else {
+        eprintln!("Usage: language [en|fr|es|zh-CN]");
+        return;
+    };
+    session.language = language;
+    println!(
+        "Comparison summary language: {} ({}).",
+        language.display_name(),
+        language.code()
+    );
+}
+
 fn show_last(session: &Session) {
     match session.last_analysis.as_ref() {
         Some(LastAnalysis::DirectoryComparison { diff, .. }) => {
             if let Some(evidence) = &session.evidence {
-                write_evidence_summary(evidence, "Last analysis.");
+                write_evidence_summary(evidence, "Last analysis.", session.language);
             } else if let Err(error) = write_summary(diff, "Last analysis.") {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
@@ -134,14 +158,14 @@ fn show_last(session: &Session) {
         }
         Some(LastAnalysis::SourceAwareComparison { diff, .. }) => {
             if let Some(evidence) = &session.evidence {
-                write_evidence_summary(evidence, "Last source-aware analysis.");
+                write_evidence_summary(evidence, "Last source-aware analysis.", session.language);
             } else if let Err(error) = write_semantic_summary(diff, "Last source-aware analysis.") {
                 eprintln!("crucksware: failed to write analysis summary: {error}");
             }
         }
         Some(LastAnalysis::FileComparison { comparison, .. }) => {
             if let Some(evidence) = &session.evidence {
-                write_evidence_summary(evidence, "Last file comparison.");
+                write_evidence_summary(evidence, "Last file comparison.", session.language);
             } else if let Err(error) =
                 write_file_comparison_summary(comparison, "Last file comparison.")
             {
@@ -172,7 +196,12 @@ fn explain(arguments: &str, session: &Session) {
     };
     let stdout = io::stdout();
     let mut output = stdout.lock();
-    let written = match report::write_evidence_explanation(evidence, selector, &mut output) {
+    let written = match report::write_evidence_explanation_in_language(
+        evidence,
+        selector,
+        session.language,
+        &mut output,
+    ) {
         Ok(written) => written,
         Err(error) => {
             eprintln!("crucksware: failed to write explanation: {error}");
@@ -451,7 +480,7 @@ fn install_evidence(
 ) {
     match evidence {
         Ok(evidence) => {
-            write_evidence_summary(&evidence, heading);
+            write_evidence_summary(&evidence, heading, session.language);
             session.evidence = Some(evidence);
         }
         Err(error) => {
@@ -461,11 +490,13 @@ fn install_evidence(
     }
 }
 
-fn write_evidence_summary(evidence: &EvidencePacket, heading: &str) {
+fn write_evidence_summary(evidence: &EvidencePacket, heading: &str, language: Language) {
     let stdout = io::stdout();
     let mut output = stdout.lock();
     let result = writeln!(output, "{heading}\n")
-        .and_then(|()| report::write_readable_summary_text(evidence, &mut output))
+        .and_then(|()| {
+            report::write_readable_summary_text_in_language(evidence, language, &mut output)
+        })
         .and_then(|()| output.flush());
     if let Err(error) = result {
         eprintln!("crucksware: failed to write analysis summary: {error}");
@@ -588,7 +619,7 @@ fn plural(count: u64, singular: &'static str, plural: &'static str) -> &'static 
 
 fn print_help() {
     println!(
-        "Interactive commands:\n  anal         Inspect one input or compare files/directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  explain ID|ENCODED_PATH\n               Show selected evidence from the latest comparison\n  explain path:ENCODED_PATH\n               Disambiguate a path that resembles an evidence ID\n  explain --all\n               Show all selected evidence from the latest comparison\n  report       Export the latest analysis\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
+        "Interactive commands:\n  anal         Inspect one input or compare files/directories\n  analyze      Alias for anal\n  last         Show the latest successful analysis\n  explain ID|ENCODED_PATH\n               Show selected evidence from the latest comparison\n  explain path:ENCODED_PATH\n               Disambiguate a path that resembles an evidence ID\n  explain --all\n               Show all selected evidence from the latest comparison\n  report       Export the latest analysis\n  language     Show or set the comparison summary language\n  help         Show this help\n  clear        Clear the terminal\n  exit, quit   Leave Crucksware"
     );
 }
 
